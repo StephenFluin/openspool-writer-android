@@ -23,8 +23,7 @@ export interface MaterialDefaults {
 
 /**
  * Materials offered in the picker. The U1 maps PLA, PETG, ABS, TPU and PVA natively;
- * the others are passed through as-is. The minimum nozzle temperature is what the U1
- * reports as the print temperature, so it is a realistic printing value, not the floor.
+ * the others are passed through as-is. Nozzle ranges are typical printing ranges.
  */
 export const MATERIALS: readonly MaterialDefaults[] = [
   { type: 'PLA', label: 'PLA', nozzle: [205, 230], bed: 60, density: 1.24 },

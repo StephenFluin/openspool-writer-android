@@ -7,7 +7,11 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
-    "catalog": "node scripts/build-catalog.mjs"
+    "catalog": "node scripts/build-catalog.mjs",
+    "start:phone": "ng serve --ssl --host 0.0.0.0 --allowed-hosts",
+    "sync": "ng build && cap sync",
+    "android": "npm run sync && cap open android",
+    "ios": "npm run sync && cap open ios"
   },
   "private": true,
   "packageManager": "npm@11.19.0",

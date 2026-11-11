@@ -31,7 +31,8 @@ for (const f of filaments) {
   seen.add(key);
 
   const [nozzleMin, nozzleMax] = f.extruder_temp_range ?? [f.extruder_temp ?? 0, 0];
-  const bed = f.bed_temp ?? f.bed_temp_range?.[0] ?? 0;
+  // Prefer the single recommendation; a range's low end (often 25 °C) is a poor default.
+  const bed = f.bed_temp ?? f.bed_temp_range?.[1] ?? 0;
   entries.push([manufacturerIndex.get(clean(f.manufacturer)), material, name, hex, nozzleMin, nozzleMax, bed]);
 }
 
