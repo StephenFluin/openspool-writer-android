@@ -32,6 +32,8 @@ The payload follows what the firmware's two readers actually parse:
 - Temperatures are numeric strings, as in the OpenSpool spec. Both readers run them through `int()`.
 - The U1's reader reads exactly the NTAG215 page range, so the app blocks NTAG213 and other tags under ~400 bytes. You can override this with "Write anyway".
 
+In the native apps, each scan also asks the chip itself what it is: `GET_VERSION` for the model, page 3 for the NDEF header, and the lock and `AUTH0` bytes for locks and passwords (`src/app/core/nfc/type2.ts`). Check and the write error dialog show these findings. Blank NTAGs, and NTAGs where Android's NDEF writer fails, are written page by page and read back to verify.
+
 ### Spoolman
 
 When a Spoolman address is set, writing a tag also does the following:
@@ -52,7 +54,7 @@ npm install
 npm start
 ```
 
-Open `http://localhost:4200/?nfc=mock` to use a simulated tag in a desktop browser (dev builds only). Scenarios: `?nfc=mock-existing`, `-readonly`, `-ntag213`, `-classic`, `-iso15693`, `-lost`, `-absent`, `-disabled`, `-unsupported`. Use `?nfc=off` to go back to real NFC.
+Open `http://localhost:4200/?nfc=mock` to use a simulated tag in a desktop browser (dev builds only). Scenarios: `?nfc=mock-existing`, `-readonly`, `-ntag213`, `-unformatted`, `-password`, `-clone`, `-classic`, `-iso15693`, `-lost`, `-absent`, `-disabled`, `-unsupported`. Use `?nfc=off` to go back to real NFC.
 
 ```bash
 npm test          # unit tests (Vitest)

@@ -1,4 +1,4 @@
-import { Component, input } from '@angular/core';
+import { Component, computed, input } from '@angular/core';
 import { TagInfo } from '../core/nfc/nfc-types';
 
 /** Compact facts about a physical tag: chip, UID, capacity, lock state. */
@@ -16,8 +16,8 @@ import { TagInfo } from '../core/nfc/nfc-types';
       @if (tag().capacity) {
         <div><dt>Space</dt><dd>{{ tag().capacity }} bytes</dd></div>
       }
-      @if (tag().writable !== null) {
-        <div><dt>Locked</dt><dd>{{ tag().writable ? 'No' : 'Yes' }}</dd></div>
+      @if (locked() !== null) {
+        <div><dt>Locked</dt><dd>{{ locked() ? 'Yes' : 'No' }}</dd></div>
       }
     </dl>
   `,
@@ -46,4 +46,10 @@ import { TagInfo } from '../core/nfc/nfc-types';
 })
 export class TagSummary {
   readonly tag = input.required<TagInfo>();
+
+  protected readonly locked = computed(() => {
+    const { writable, chip } = this.tag();
+    if (writable === false || chip?.locked) return true;
+    return writable === null && chip?.locked == null ? null : false;
+  });
 }

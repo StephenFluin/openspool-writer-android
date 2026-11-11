@@ -35,7 +35,7 @@
   <section class="card" aria-labelledby="trouble-heading">
     <h2 id="trouble-heading">When the printer doesn’t pick up a spool</h2>
     <ul>
-      <li>Use <strong>Check</strong> to read the tag. It tells you if the data is there and if the U1 can read that chip.</li>
+      <li>Use <strong>Check</strong> to read the tag. It tells you if the data is there and if the U1 can read that chip. In the app it also asks the chip what it really is, and whether it’s locked or password protected.</li>
       <li>Make sure the tag is within 1–3 cm of the reader, on the side of the spool facing the printer.</li>
       <li>A vendor tag on the same spool (Bambu, Creality…) can drown out yours. Cover it with a strip of foil tape.</li>
       <li>On the printer, run <code>FILAMENT_DT_UPDATE CHANNEL=0</code> (0–3) to re-read a slot. OpenRFID problems show up in <code>openrfid.log</code> in Fluidd.</li>

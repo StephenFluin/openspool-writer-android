@@ -10,12 +10,13 @@ import { encodePayload, OPENSPOOL_MIME, tagBytesNeeded } from '../../core/opensp
 import { describeSpool, SpoolmanService } from '../../core/spoolman/spoolman.service';
 import { SpoolmanSpool } from '../../core/spoolman/spoolman-types';
 import { NfcStatusBanner } from '../../shared/nfc-status-banner';
+import { TagDiagnostics } from '../../shared/tag-diagnostics';
 import { TagSummary } from '../../shared/tag-summary';
 
 type CheckState =
   | { step: 'idle' }
   | { step: 'scanning' }
-  | { step: 'error'; help: ProblemHelp }
+  | { step: 'error'; error: NfcError; help: ProblemHelp }
   | { step: 'result'; tag: TagInfo };
 
 type OwnerState = { status: 'none' } | { status: 'loading' } | { status: 'found'; spool: SpoolmanSpool | undefined } | { status: 'error'; message: string };
@@ -40,7 +41,7 @@ const TYPICAL_BYTES = tagBytesNeeded(
 
 @Component({
   selector: 'app-check-page',
-  imports: [TagSummary, NfcStatusBanner],
+  imports: [TagSummary, TagDiagnostics, NfcStatusBanner],
   templateUrl: './check-page.html',
   styleUrl: './check-page.css',
 })
@@ -99,7 +100,7 @@ export class CheckPage {
         this.state.set({ step: 'idle' });
         return;
       }
-      this.state.set({ step: 'error', help: helpFor(error, this.nfc.kind, Capacitor.getPlatform() === 'ios') });
+      this.state.set({ step: 'error', error, help: helpFor(error, this.nfc.kind, Capacitor.getPlatform() === 'ios') });
     }
   }
 

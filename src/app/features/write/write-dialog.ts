@@ -5,12 +5,13 @@ import { displayName } from '../../core/filament';
 import { NfcService } from '../../core/nfc/nfc.service';
 import { describeSpool, SpoolmanService } from '../../core/spoolman/spoolman.service';
 import { SpoolmanSpool } from '../../core/spoolman/spoolman-types';
+import { TagDiagnostics } from '../../shared/tag-diagnostics';
 import { TagSummary } from '../../shared/tag-summary';
 import { WriteFlow } from './write-flow';
 
 @Component({
   selector: 'app-write-dialog',
-  imports: [TagSummary],
+  imports: [TagSummary, TagDiagnostics],
   templateUrl: './write-dialog.html',
   styleUrl: './write-dialog.css',
 })

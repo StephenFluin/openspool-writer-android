@@ -26,6 +26,9 @@
             }
           </ul>
         </div>
+        @if (s.error.tag; as tag) {
+          <app-tag-diagnostics [tag]="tag" [error]="s.error" />
+        }
         <button type="button" class="button primary" (click)="scan()">{{ s.help.retryLabel }}</button>
       }
       @case ('result') {
@@ -36,6 +39,7 @@
           </p>
         }
         <app-tag-summary [tag]="s.tag" />
+        <app-tag-diagnostics [tag]="s.tag" />
 
         @if (contents(); as spec) {
           <div class="contents">

@@ -122,6 +122,7 @@ function toTagInfo(event: NDEFReadingEventLike): TagInfo {
     techTypes: [],
     records,
     openSpool: findOpenSpool(records),
+    chip: null,
   };
 }
 

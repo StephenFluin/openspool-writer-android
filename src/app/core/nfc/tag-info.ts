@@ -1,5 +1,6 @@
 import { OPENSPOOL_MIME, parseOpenSpool } from '../openspool';
-import { TagRecord } from './nfc-types';
+import { TagInfo, TagRecord } from './nfc-types';
+import { ChipReport } from './type2';
 
 /** Best guess at the NXP chip from the NDEF capacity the platform reports. */
 export function guessChip(capacity: number | null, fallback: string | null): string | null {
@@ -19,4 +20,15 @@ export function findOpenSpool(records: TagRecord[]) {
     }
   }
   return null;
+}
+
+/** Adds a chip report to a tag, letting the chip's own answers override the platform's guesses. */
+export function withChip(tag: TagInfo, chip: ChipReport | null): TagInfo {
+  if (!chip) return tag;
+  return {
+    ...tag,
+    chip,
+    kind: chip.knownNtag ? chip.chip : tag.kind,
+    capacity: tag.capacity ?? chip.ndefCapacity,
+  };
 }

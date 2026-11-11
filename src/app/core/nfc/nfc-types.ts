@@ -1,4 +1,5 @@
 import { FilamentSpec } from '../filament';
+import { ChipReport } from './type2';
 
 export type NfcAvailability = 'ready' | 'disabled' | 'unsupported' | 'web-unsupported' | 'permission-denied';
 
@@ -9,6 +10,7 @@ export type NfcErrorCode =
   | 'timeout'
   | 'cancelled'
   | 'read-only'
+  | 'password'
   | 'too-small'
   | 'incompatible'
   | 'not-ndef'
@@ -33,6 +35,8 @@ export interface TagInfo {
   records: TagRecord[];
   /** Decoded OpenSpool contents, if the tag already holds a filament record. */
   openSpool: Partial<FilamentSpec> | null;
+  /** What the chip itself reported, when the platform allows raw commands (native apps only). */
+  chip: ChipReport | null;
 }
 
 export interface WriteRequest {
@@ -87,7 +91,10 @@ export function checkTagForWrite(tag: TagInfo, request: WriteRequest): NfcError 
       tag,
     );
   }
-  if (tag.writable === false) {
+  if (tag.chip?.passwordProtected) {
+    return new NfcError('password', 'This tag is password protected, so it can’t be written.', tag);
+  }
+  if (tag.writable === false || tag.chip?.locked) {
     return new NfcError('read-only', 'This tag is locked (read-only) and can’t be rewritten.', tag);
   }
   if (tag.capacity !== null && tag.capacity > 0 && tag.capacity < request.bytesNeeded) {

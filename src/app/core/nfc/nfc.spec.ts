@@ -15,6 +15,7 @@ function tag(overrides: Partial<TagInfo>): TagInfo {
     techTypes: ['android.nfc.tech.NfcA', 'android.nfc.tech.MifareUltralight', 'android.nfc.tech.Ndef'],
     records: [],
     openSpool: null,
+    chip: null,
     ...overrides,
   };
 }

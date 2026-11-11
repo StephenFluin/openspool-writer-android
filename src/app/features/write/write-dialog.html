@@ -48,6 +48,7 @@
       }
       @if (s.error.tag; as tag) {
         <app-tag-summary [tag]="tag" />
+        <app-tag-diagnostics [tag]="tag" [error]="s.error" />
       }
       <div class="actions">
         <button type="button" class="button primary" (click)="flow.retry()">{{ s.help.retryLabel }}</button>

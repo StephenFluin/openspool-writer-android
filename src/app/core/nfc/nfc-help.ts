@@ -17,7 +17,7 @@ const FINDING_THE_ANTENNA_IOS = 'On iPhone the NFC antenna is along the top edge
 const HOLD_STILL = 'Hold the tag flat against the phone and keep it still for a couple of seconds.';
 const USE_NTAG215 = 'Use NTAG215 or NTAG216 stickers (13.56 MHz, “NFC Forum Type 2”). They’re cheap and the U1 reads them reliably.';
 
-const TAG_PROBLEMS = new Set<NfcError['code']>(['read-only', 'too-small', 'incompatible', 'not-ndef']);
+const TAG_PROBLEMS = new Set<NfcError['code']>(['read-only', 'password', 'too-small', 'incompatible', 'not-ndef']);
 
 export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boolean): ProblemHelp {
   const antenna = isIos ? FINDING_THE_ANTENNA_IOS : FINDING_THE_ANTENNA_ANDROID;
@@ -67,6 +67,11 @@ export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boo
         'Locked tags can never be rewritten. Use a new, blank tag.',
         'Tags that came on a vendor spool (Bambu, Snapmaker, Creality…) are locked and encrypted. Stick a fresh NTAG215 on the spool instead.',
         'If the vendor tag sits next to yours, cover it with a piece of foil tape so the U1 reads yours.',
+      ]);
+    case 'password':
+      return help('This tag has a password', [
+        'Its memory is protected by a password, so the phone can’t write to it.',
+        'Tags sold for Amiibo or set up by another app are sometimes protected this way. Use a new, blank NTAG215.',
       ]);
     case 'too-small':
       return help('This tag is too small', [
