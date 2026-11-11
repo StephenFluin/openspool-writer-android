@@ -3,7 +3,7 @@ import { FieldTree, form, FormField, max, maxLength, min, required, submit, vali
 import { RouterLink } from '@angular/router';
 import { CatalogService } from '../../core/catalog.service';
 import { DraftService } from '../../core/draft.service';
-import { COMMON_COLORS, displayName, MATERIALS, NamedColor, normalizeHex, QUICK_COLORS, SUBTYPES } from '../../core/filament';
+import { COMMON_COLORS, displayName, MATERIALS, normalizeHex, SUBTYPES } from '../../core/filament';
 import { NfcService } from '../../core/nfc/nfc.service';
 import { buildOpenSpoolPayload, encodePayload, NTAG215_NDEF_BYTES, tagBytesNeeded } from '../../core/openspool';
 import { SettingsService } from '../../core/settings.service';
@@ -146,11 +146,7 @@ export class WritePage {
     this.draft.setMaterial(choice === OTHER_MATERIAL ? '' : choice);
   }
 
-  protected readonly quickColors = QUICK_COLORS;
-
-  protected pickQuickColor(color: NamedColor): void {
-    this.draft.patch({ colorName: color.name, colorHex: color.hex });
-  }
+  protected readonly commonColors = COMMON_COLORS;
 
   protected pickColor(option: ComboOption): void {
     const match = this.brandColors().find((c) => c.name === option.value && c.hex === option.swatch);
@@ -168,7 +164,13 @@ export class WritePage {
 
   protected onColorInput(event: Event): void {
     const hex = normalizeHex((event.target as HTMLInputElement).value);
-    if (hex) this.draft.patch({ colorHex: hex });
+    if (!hex) return;
+    // A preset picked in the color dialog brings its name along; a custom color drops a name that
+    // came from a list, since it no longer describes the color. Names the user typed stay.
+    const named = COMMON_COLORS.find((color) => color.hex === hex);
+    const current = this.spec().colorName;
+    const listed = [...COMMON_COLORS, ...this.brandColors()].some((color) => color.name === current);
+    this.draft.patch({ colorHex: hex, colorName: named?.name ?? (listed ? '' : current) });
   }
 
   protected pickSpool(option: ComboOption): void {

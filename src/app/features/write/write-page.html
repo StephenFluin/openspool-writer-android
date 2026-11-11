@@ -62,10 +62,17 @@
         <input
           type="color"
           class="color-picker"
-          aria-label="Pick a custom color"
+          aria-label="Pick a color"
+          list="color-suggestions"
           [value]="'#' + (swatch() ?? 'ffffff').toLowerCase()"
           (input)="onColorInput($event)"
         />
+        <!-- Android's color dialog shows these as its preset swatches. -->
+        <datalist id="color-suggestions">
+          @for (color of commonColors; track color.name) {
+            <option [value]="'#' + color.hex.toLowerCase()" [label]="color.name"></option>
+          }
+        </datalist>
         <app-combobox
           class="grow"
           inputId="color"
@@ -76,19 +83,6 @@
           [options]="colorOptions()"
           (picked)="pickColor($event)"
         />
-      </div>
-      <div class="quick-colors" role="group" aria-label="Common colors">
-        @for (color of quickColors; track color.name) {
-          <button
-            type="button"
-            [class.clear]="color.name === 'Transparent'"
-            [style.background-color]="'#' + color.hex"
-            [attr.aria-label]="color.name"
-            [attr.aria-pressed]="swatch() === color.hex && spec().colorName === color.name"
-            [title]="color.name"
-            (click)="pickQuickColor(color)"
-          ></button>
-        }
       </div>
       <div class="hex-row">
         <label for="hex">Hex</label>

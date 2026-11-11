@@ -100,25 +100,6 @@ export const COMMON_COLORS: readonly NamedColor[] = [
   { name: 'Transparent', hex: 'F0F0F0' },
 ];
 
-/** The everyday colors shown as one-tap swatches. */
-export const QUICK_COLORS: readonly NamedColor[] = [
-  'Black',
-  'White',
-  'Grey',
-  'Silver',
-  'Red',
-  'Orange',
-  'Yellow',
-  'Green',
-  'Cyan',
-  'Blue',
-  'Navy',
-  'Purple',
-  'Pink',
-  'Brown',
-  'Beige',
-  'Transparent',
-].map((name) => COMMON_COLORS.find((color) => color.name === name)!);
 
 export function materialDefaults(type: string): MaterialDefaults | undefined {
   const normalized = type.trim().toUpperCase();
