@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">U1 Spool Tags</string>
+    <string name="title_activity_main">U1 Spool Tags</string>
+    <string name="package_name">io.fluin.u1tags</string>
+    <string name="custom_url_scheme">io.fluin.u1tags</string>
+</resources>
