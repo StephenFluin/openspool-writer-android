@@ -7,6 +7,8 @@ export interface ProblemHelp {
   offerSettings: boolean;
   /** Show "Write anyway" — only for tags that will take the data but the U1 may not read. */
   offerOverride: boolean;
+  /** Retrying the same tag can't help when the tag itself is the problem. */
+  retryLabel: string;
 }
 
 const FINDING_THE_ANTENNA_ANDROID =
@@ -15,6 +17,8 @@ const FINDING_THE_ANTENNA_IOS = 'On iPhone the NFC antenna is along the top edge
 const HOLD_STILL = 'Hold the tag flat against the phone and keep it still for a couple of seconds.';
 const USE_NTAG215 = 'Use NTAG215 or NTAG216 stickers (13.56 MHz, “NFC Forum Type 2”). They’re cheap and the U1 reads them reliably.';
 
+const TAG_PROBLEMS = new Set<NfcError['code']>(['read-only', 'too-small', 'incompatible', 'not-ndef']);
+
 export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boolean): ProblemHelp {
   const antenna = isIos ? FINDING_THE_ANTENNA_IOS : FINDING_THE_ANTENNA_ANDROID;
   const help = (title: string, tips: string[], extra: Partial<ProblemHelp> = {}): ProblemHelp => ({
@@ -22,6 +26,7 @@ export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boo
     tips,
     offerSettings: false,
     offerOverride: false,
+    retryLabel: TAG_PROBLEMS.has(error.code) ? 'Try another tag' : 'Try again',
     ...extra,
   });
 

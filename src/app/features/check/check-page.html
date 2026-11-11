@@ -26,7 +26,7 @@
             }
           </ul>
         </div>
-        <button type="button" class="button primary" (click)="scan()">Try again</button>
+        <button type="button" class="button primary" (click)="scan()">{{ s.help.retryLabel }}</button>
       }
       @case ('result') {
         @if (verdict(); as v) {

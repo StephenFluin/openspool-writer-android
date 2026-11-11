@@ -22,10 +22,12 @@ export class CatalogService {
   private readonly file = httpResource<CatalogFile>(() => 'catalog.json');
 
   readonly loading = this.file.isLoading;
-  readonly manufacturers = computed(() => this.file.value()?.manufacturers ?? []);
+  /** Undefined until loaded, and if loading failed (reading value() in the error state throws). */
+  private readonly data = computed(() => (this.file.hasValue() ? this.file.value() : undefined));
+  readonly manufacturers = computed(() => this.data()?.manufacturers ?? []);
 
   private readonly colorsByBrand = computed(() => {
-    const file = this.file.value();
+    const file = this.data();
     const map = new Map<string, CatalogColor[]>();
     if (!file) return map;
     for (const [index, material, name, hex, nozzleMin, nozzleMax, bed] of file.filaments) {

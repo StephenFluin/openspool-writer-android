@@ -8,6 +8,8 @@ export interface ComboOption {
   hint?: string;
   /** Six-digit hex color shown as a swatch. */
   swatch?: string;
+  /** Matches with a lower rank are listed first (default 0). */
+  rank?: number;
 }
 
 let nextId = 0;
@@ -111,7 +113,8 @@ export class Combobox implements FormValueControl<string> {
       const index = text.indexOf(query);
       if (index < 0) continue;
       const wordStart = index === 0 || /[\s\-(/]/.test(text[index - 1]);
-      scored.push({ option, score: index === 0 ? 0 : wordStart ? 1 : 2 });
+      const match = index === 0 ? 0 : wordStart ? 1 : 2;
+      scored.push({ option, score: (option.rank ?? 0) * 10 + match });
     }
     return scored
       .sort((a, b) => a.score - b.score)

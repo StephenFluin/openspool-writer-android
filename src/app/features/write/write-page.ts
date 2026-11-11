@@ -1,4 +1,4 @@
-import { Component, computed, DOCUMENT, inject, linkedSignal, resource, signal } from '@angular/core';
+import { afterNextRender, Component, computed, DOCUMENT, inject, Injector, linkedSignal, resource, signal } from '@angular/core';
 import { FieldTree, form, FormField, max, maxLength, min, required, submit, validate } from '@angular/forms/signals';
 import { RouterLink } from '@angular/router';
 import { CatalogService } from '../../core/catalog.service';
@@ -28,6 +28,7 @@ export class WritePage {
   private readonly settings = inject(SettingsService);
   private readonly flow = inject(WriteFlow);
   private readonly document = inject(DOCUMENT);
+  private readonly injector = inject(Injector);
   protected readonly spoolman = inject(SpoolmanService);
   protected readonly nfc = inject(NfcService);
 
@@ -67,7 +68,9 @@ export class WritePage {
       options.push({ value: name.trim(), hint });
     };
     for (const brand of this.settings.recentBrands()) add(brand, 'Recent');
-    for (const vendor of this.spoolman.vendors.value()) add(vendor.name, 'In Spoolman');
+    // An unreachable Spoolman leaves the resource in an error state, where value() throws.
+    const vendors = this.spoolman.vendors.hasValue() ? this.spoolman.vendors.value() : [];
+    for (const vendor of vendors) add(vendor.name, 'In Spoolman');
     add('Generic');
     for (const brand of this.catalog.manufacturers()) add(brand);
     return options;
@@ -85,7 +88,9 @@ export class WritePage {
     }));
     const seen = new Set(options.map((o) => o.value.toLowerCase()));
     for (const color of COMMON_COLORS) {
-      if (!seen.has(color.name.toLowerCase())) options.push({ value: color.name, swatch: color.hex, hint: 'Generic' });
+      if (!seen.has(color.name.toLowerCase())) {
+        options.push({ value: color.name, swatch: color.hex, hint: 'Generic', rank: 1 });
+      }
     }
     return options;
   });
@@ -162,7 +167,7 @@ export class WritePage {
   }
 
   protected pickSpool(option: ComboOption): void {
-    const spool = this.spools.value()?.find((s) => describeSpool(s) === option.value);
+    const spool = this.spools.hasValue() ? this.spools.value().find((s) => describeSpool(s) === option.value) : undefined;
     if (spool) {
       this.draft.loadSpool(spool);
       this.spoolMissing.set(false);
@@ -193,7 +198,9 @@ export class WritePage {
 
   /** Move focus to the first problem so keyboard and screen reader users land on it. */
   private focusFirstInvalid(): void {
-    queueMicrotask(() => this.document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+    afterNextRender(() => this.document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(), {
+      injector: this.injector,
+    });
   }
 
   private target(): SpoolTarget {
