@@ -25,6 +25,11 @@ const COMMAND_TIMEOUT_MS = 500;
  * which pauses the app. iOS stops right away so its system sheet closes.
  */
 const ANDROID_STOP_DELAY_MS = 15_000;
+/** Larger than any Type 2 tag's NDEF area (at most 2040 bytes), so the plugin refuses it unwritten. */
+const RELEASE_PAYLOAD_BYTES = 4096;
+
+/** True while the plugin holds a raw connection that our own commands opened. */
+let rawConnectionOpen = false;
 
 /** Android and iOS via @capgo/capacitor-nfc. */
 export class NativeNfcBackend implements NfcBackend {
@@ -58,6 +63,7 @@ export class NativeNfcBackend implements NfcBackend {
         return tag;
       }
       try {
+        rawConnectionOpen = false; // write() closes it before writing.
         await CapacitorNfc.write({
           allowFormat: true,
           records: [
@@ -125,12 +131,16 @@ export class NativeNfcBackend implements NfcBackend {
         CapacitorNfc.addListener('nfcEvent', async (event) => {
           if (busy || done) return;
           busy = true;
+          let settle: () => void;
           try {
             const result = await onTag(toTagInfo(event.tag));
-            finish(() => resolve(result));
+            settle = () => resolve(result);
           } catch (error) {
-            finish(() => reject(error instanceof NfcError ? error : mapNativeError(error)));
+            settle = () => reject(error instanceof NfcError ? error : mapNativeError(error));
           }
+          // Close it now, while this tag is still in range; see releaseRawConnection.
+          if (rawConnectionOpen) await releaseRawConnection();
+          finish(settle);
         }),
       );
       // iOS only: the system sheet was dismissed or its 60 second limit ran out.
@@ -164,8 +174,31 @@ export class NativeNfcBackend implements NfcBackend {
 
 /** Sends one raw NFC-A command to the tag in the field. */
 async function command(data: number[]): Promise<number[]> {
-  const { response } = await CapacitorNfc.transceive({ data, tech: 'nfcA', timeout: COMMAND_TIMEOUT_MS });
-  return response;
+  try {
+    const { response } = await CapacitorNfc.transceive({ data, tech: 'nfcA', timeout: COMMAND_TIMEOUT_MS });
+    rawConnectionOpen = true;
+    return response;
+  } catch (error) {
+    rawConnectionOpen = false; // The plugin closes the connection when a command fails.
+    throw error;
+  }
+}
+
+/**
+ * Works around a plugin bug: it keeps the raw connection from transceive() open after the scan,
+ * and when the next tag arrives, closing it throws (the old tag is stale) before the new tag is
+ * reported, so no tag is ever detected again until the app restarts. Its write() closes that
+ * connection first and checks the record against the tag's free space before writing anything,
+ * so a record bigger than any Type 2 tag closes the connection while this tag is still in range
+ * and leaves the tag untouched.
+ */
+async function releaseRawConnection(): Promise<void> {
+  rawConnectionOpen = false;
+  const refused = CapacitorNfc.write({
+    allowFormat: false,
+    records: [{ tnf: TNF_MIME_MEDIA, type: [0x78], id: [], payload: new Array<number>(RELEASE_PAYLOAD_BYTES).fill(0) }],
+  }).catch(() => undefined);
+  await Promise.race([refused, new Promise((resolve) => setTimeout(resolve, COMMAND_TIMEOUT_MS * 2))]);
 }
 
 /**
