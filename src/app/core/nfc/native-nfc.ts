@@ -1,3 +1,4 @@
+import { Capacitor } from '@capacitor/core';
 import { CapacitorNfc, NfcTag, PluginListenerHandle } from '@capgo/capacitor-nfc';
 import { uidToHex } from '../openspool';
 import { checkTagForWrite, NfcAvailability, NfcBackend, NfcError, TagInfo, WriteRequest } from './nfc-types';
@@ -18,10 +19,19 @@ import {
 const TNF_MIME_MEDIA = 0x02;
 /** Per-command timeout for raw NTAG commands; each one takes a few milliseconds on a healthy tag. */
 const COMMAND_TIMEOUT_MS = 500;
+/**
+ * How long Android keeps the reader on after a scan ends. Stopping and immediately restarting it
+ * ("Try another tag") can leave it off, and while it's off Android hands nearby tags to the system,
+ * which pauses the app. iOS stops right away so its system sheet closes.
+ */
+const ANDROID_STOP_DELAY_MS = 15_000;
 
 /** Android and iOS via @capgo/capacitor-nfc. */
 export class NativeNfcBackend implements NfcBackend {
   readonly kind = 'native';
+  /** Settles once the previous session's listeners are gone. */
+  private teardown: Promise<unknown> = Promise.resolve();
+  private stopTimer: ReturnType<typeof setTimeout> | undefined;
 
   async availability(): Promise<NfcAvailability> {
     const { supported } = await CapacitorNfc.isSupported();
@@ -76,7 +86,16 @@ export class NativeNfcBackend implements NfcBackend {
     await CapacitorNfc.showSettings();
   }
 
+  private stopSoon(): void {
+    clearTimeout(this.stopTimer);
+    const stop = () => void CapacitorNfc.stopScanning().catch(() => undefined);
+    if (Capacitor.getPlatform() === 'ios') stop();
+    else this.stopTimer = setTimeout(stop, ANDROID_STOP_DELAY_MS);
+  }
+
   private async session<T>(signal: AbortSignal, onTag: (tag: TagInfo) => Promise<T>): Promise<T> {
+    clearTimeout(this.stopTimer);
+    await this.teardown;
     const availability = await this.availability();
     if (availability === 'unsupported') {
       throw new NfcError('unsupported', 'This device has no NFC reader.');
@@ -95,8 +114,8 @@ export class NativeNfcBackend implements NfcBackend {
         if (done) return;
         done = true;
         signal.removeEventListener('abort', onAbort);
-        for (const handle of handles) handle.then((h) => h.remove()).catch(() => undefined);
-        CapacitorNfc.stopScanning().catch(() => undefined);
+        this.teardown = Promise.allSettled(handles.map((handle) => handle.then((h) => h.remove())));
+        this.stopSoon();
         settle();
       };
       const onAbort = () => finish(() => reject(new NfcError('cancelled', 'Scan cancelled.')));
