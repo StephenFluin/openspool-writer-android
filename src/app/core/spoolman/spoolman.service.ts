@@ -93,6 +93,7 @@ export class SpoolmanService {
       location: options.location.trim() || undefined,
       extra: fields.cardUids ? { card_uids: encodeCardUids([uid]) } : {},
     });
+    options.onCreated?.(spool);
     spool = await this.linkNativeTag(spool, uid);
     return {
       spool,

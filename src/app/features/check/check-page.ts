@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, computed, DestroyRef, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
 import { DraftService } from '../../core/draft.service';
@@ -57,6 +57,13 @@ export class CheckPage {
   protected readonly describeSpool = describeSpool;
   private abort: AbortController | null = null;
 
+  constructor() {
+    inject(DestroyRef).onDestroy(() => {
+      this.abort?.abort();
+      this.abort = null;
+    });
+  }
+
   protected readonly verdict = computed(() => {
     const state = this.state();
     if (state.step !== 'result') return null;
@@ -82,14 +89,15 @@ export class CheckPage {
     return displayName({ brand: spec.brand ?? '', material: spec.material ?? '', subtype: spec.subtype ?? '' });
   }
 
-  protected async scan(): Promise<void> {
+  /** `reuse` picks up a tag still on the phone, for retrying after an error. */
+  protected async scan(reuse = false): Promise<void> {
     this.abort?.abort();
     const abort = new AbortController();
     this.abort = abort;
     this.state.set({ step: 'scanning' });
     this.owner.set({ status: 'none' });
     try {
-      const tag = await this.nfc.read(abort.signal);
+      const tag = await this.nfc.read(abort.signal, { reuse });
       if (this.abort !== abort) return;
       void this.nfc.haptic('success');
       this.state.set({ step: 'result', tag });
@@ -125,11 +133,17 @@ export class CheckPage {
 
   private async lookUpOwner(tag: TagInfo): Promise<void> {
     if (!this.spoolman.configured() || !tag.uid) return;
+    // A slow lookup for an earlier tag must not overwrite the one for the tag on screen.
+    const current = () => {
+      const state = this.state();
+      return state.step === 'result' && state.tag === tag;
+    };
     this.owner.set({ status: 'loading' });
     try {
-      this.owner.set({ status: 'found', spool: await this.spoolman.findTagOwner(tag.uid) });
+      const spool = await this.spoolman.findTagOwner(tag.uid);
+      if (current()) this.owner.set({ status: 'found', spool });
     } catch (error) {
-      this.owner.set({ status: 'error', message: error instanceof Error ? error.message : String(error) });
+      if (current()) this.owner.set({ status: 'error', message: error instanceof Error ? error.message : String(error) });
     }
   }
 }

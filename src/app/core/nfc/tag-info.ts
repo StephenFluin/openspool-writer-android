@@ -1,4 +1,4 @@
-import { OPENSPOOL_MIME, parseOpenSpool } from '../openspool';
+import { OPENSPOOL_MIME, parseOpenSpool, uidToHex } from '../openspool';
 import { TagInfo, TagRecord } from './nfc-types';
 import { ChipReport } from './type2';
 
@@ -30,5 +30,35 @@ export function withChip(tag: TagInfo, chip: ChipReport | null): TagInfo {
     chip,
     kind: chip.knownNtag ? chip.chip : tag.kind,
     capacity: tag.capacity ?? chip.ndefCapacity,
+  };
+}
+
+export const TNF_MIME_MEDIA = 0x02;
+
+/** A tag as both native plugins report it (Android's TagReader and @capgo/capacitor-nfc). */
+export interface RawTag {
+  id?: number[];
+  techTypes?: string[];
+  type?: string | null;
+  maxSize?: number | null;
+  isWritable?: boolean | null;
+  ndefMessage?: { tnf: number; type: number[]; payload: number[] }[] | null;
+}
+
+export function tagInfoFrom(raw: RawTag): TagInfo {
+  const records = (raw.ndefMessage ?? []).map((record) => ({
+    mediaType: record.tnf === TNF_MIME_MEDIA ? new TextDecoder().decode(Uint8Array.from(record.type)) : null,
+    data: Uint8Array.from(record.payload),
+  }));
+  const capacity = raw.maxSize ?? null;
+  return {
+    uid: uidToHex(raw.id ?? []),
+    kind: guessChip(capacity, raw.type ?? null),
+    capacity,
+    writable: raw.isWritable ?? null,
+    techTypes: raw.techTypes ?? [],
+    records,
+    openSpool: findOpenSpool(records),
+    chip: null,
   };
 }

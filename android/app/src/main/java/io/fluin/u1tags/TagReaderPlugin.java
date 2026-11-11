@@ -1,0 +1,386 @@
+package io.fluin.u1tags;
+
+import android.app.Activity;
+import android.nfc.FormatException;
+import android.nfc.NdefMessage;
+import android.nfc.NdefRecord;
+import android.nfc.NfcAdapter;
+import android.nfc.Tag;
+import android.nfc.TagLostException;
+import android.nfc.tech.Ndef;
+import android.nfc.tech.NdefFormatable;
+import android.nfc.tech.NfcA;
+import android.nfc.tech.TagTechnology;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import com.getcapacitor.JSArray;
+import com.getcapacitor.JSObject;
+import com.getcapacitor.Logger;
+import com.getcapacitor.Plugin;
+import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginMethod;
+import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.IOException;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.json.JSONException;
+
+/**
+ * Android tag access: reader mode, tag events, and raw NFC-A and NDEF operations on the exact tag an
+ * event reported. It replaces @capgo/capacitor-nfc's scanning on Android, whose events are retained
+ * and replayed to later listeners, whose commands go to whichever tag came last, and whose stale
+ * connections throw out of its tag callback. Here every call settles, and a tag that is gone
+ * rejects with code TAG_LOST.
+ */
+@CapacitorPlugin(name = "TagReader")
+public class TagReaderPlugin extends Plugin {
+
+    private static final String TAG = "TagReader";
+    /** NFC-A for NTAGs, MIFARE and bank cards; NFC-V so ISO 15693 tags can be named as incompatible. */
+    private static final int READER_FLAGS = NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_V;
+    private static final int PRESENCE_CHECK_DELAY_MS = 250;
+    /** Reader mode stays on this long after a scan, so a tag being lifted away isn't handed to the system. */
+    private static final long GRACE_MS = 10_000;
+    /** Right after a resume, NfcService may refuse reader mode, so it's asked again a few times. */
+    private static final long[] RESUME_RETRIES_MS = { 0, 400, 1500 };
+    /** Tags kept for later commands; older ones are forgotten. */
+    private static final int KEPT_TAGS = 8;
+
+    private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final AtomicInteger nextTagId = new AtomicInteger();
+    private final Map<Integer, Tag> tags = new ConcurrentHashMap<>();
+    private final Map<Integer, JSObject> infos = new ConcurrentHashMap<>();
+
+    /** The scan in progress, or 0 between scans. Events are only sent during a scan. */
+    private volatile int session = 0;
+    /** True during a scan and its grace period. */
+    private volatile boolean readerWanted = false;
+    private volatile int latestTagId = -1;
+
+    private final Runnable enableReader = this::enableReader;
+    private final Runnable graceOver = () -> {
+        readerWanted = false;
+        disableReader();
+    };
+
+    // Only touched on the io thread.
+    private TagTechnology connection;
+    private int connectionTagId = -1;
+
+    @PluginMethod
+    public void start(PluginCall call) {
+        NfcAdapter adapter = adapter();
+        if (adapter == null) {
+            call.reject("This device has no NFC reader.", "UNSUPPORTED");
+            return;
+        }
+        if (!adapter.isEnabled()) {
+            call.reject("NFC is turned off.", "DISABLED");
+            return;
+        }
+        int id = call.getInt("session", 0);
+        boolean reusePresent = Boolean.TRUE.equals(call.getBoolean("reusePresent", false));
+        session = id;
+        readerWanted = true;
+        main.removeCallbacks(graceOver);
+        main.post(enableReader);
+        if (reusePresent) {
+            // Reader mode doesn't report a tag again while it stays in the field, so a retry with the
+            // tag still on the phone checks whether the last one is there and reports it.
+            int tagId = latestTagId;
+            io.execute(() -> {
+                if (session == id && tagId >= 0 && isPresent(tagId)) emit(id, tagId);
+            });
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void stop(PluginCall call) {
+        session = 0;
+        io.execute(this::closeConnection);
+        main.removeCallbacks(graceOver);
+        main.postDelayed(graceOver, GRACE_MS);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void transceive(PluginCall call) {
+        int tagId = call.getInt("tagId", -1);
+        Integer timeout = call.getInt("timeout");
+        byte[] frame;
+        try {
+            frame = bytes(call.getArray("data"));
+        } catch (IllegalArgumentException e) {
+            call.reject(e.getMessage(), "INVALID");
+            return;
+        }
+        io.execute(() -> {
+            try {
+                NfcA nfcA = nfcA(tagId);
+                if (timeout != null) nfcA.setTimeout(timeout);
+                JSObject result = new JSObject();
+                result.put("response", array(nfcA.transceive(frame)));
+                call.resolve(result);
+            } catch (Exception e) {
+                // Closing also resets a tag that refused the command, so the next command can reach it.
+                closeConnection();
+                reject(call, e);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void writeNdef(PluginCall call) {
+        int tagId = call.getInt("tagId", -1);
+        boolean format = Boolean.TRUE.equals(call.getBoolean("format", false));
+        byte[] bytes;
+        try {
+            bytes = bytes(call.getArray("message"));
+        } catch (IllegalArgumentException e) {
+            call.reject(e.getMessage(), "INVALID");
+            return;
+        }
+        io.execute(() -> {
+            closeConnection();
+            TagTechnology tech = null;
+            try {
+                Tag tag = tag(tagId);
+                NdefMessage message = new NdefMessage(bytes);
+                Ndef ndef = Ndef.get(tag);
+                if (ndef != null) {
+                    tech = ndef;
+                    ndef.connect();
+                    if (!ndef.isWritable()) {
+                        call.reject("Tag is read only.", "READ_ONLY");
+                        return;
+                    }
+                    if (ndef.getMaxSize() < bytes.length) {
+                        call.reject("Tag capacity is insufficient.", "TOO_SMALL");
+                        return;
+                    }
+                    ndef.writeNdefMessage(message);
+                } else {
+                    NdefFormatable formatable = format ? NdefFormatable.get(tag) : null;
+                    if (formatable == null) {
+                        call.reject("Tag does not support NDEF.", "NOT_NDEF");
+                        return;
+                    }
+                    tech = formatable;
+                    formatable.connect();
+                    formatable.format(message);
+                }
+                call.resolve();
+            } catch (Exception e) {
+                reject(call, e);
+            } finally {
+                // Always released, so raw commands can follow on the same tag.
+                closeQuietly(tech);
+            }
+        });
+    }
+
+    @Override
+    protected void handleOnResume() {
+        super.handleOnResume();
+        if (!readerWanted) return;
+        for (long delay : RESUME_RETRIES_MS) main.postDelayed(enableReader, delay);
+    }
+
+    @Override
+    protected void handleOnPause() {
+        super.handleOnPause();
+        main.removeCallbacks(enableReader);
+        disableReader();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        super.handleOnDestroy();
+        main.removeCallbacks(enableReader);
+        main.removeCallbacks(graceOver);
+        io.shutdownNow();
+    }
+
+    private void onTagDiscovered(Tag tag) {
+        int id = nextTagId.incrementAndGet();
+        JSObject info;
+        try {
+            info = describe(id, tag);
+        } catch (Exception e) {
+            Logger.warn(TAG, "Couldn't describe tag: " + e.getMessage());
+            return;
+        }
+        tags.put(id, tag);
+        infos.put(id, info);
+        tags.keySet().removeIf((key) -> key <= id - KEPT_TAGS);
+        infos.keySet().removeIf((key) -> key <= id - KEPT_TAGS);
+        latestTagId = id;
+        int current = session;
+        if (current != 0) emit(current, id);
+    }
+
+    private void emit(int session, int tagId) {
+        JSObject info = infos.get(tagId);
+        if (info == null) return;
+        JSObject event = new JSObject();
+        event.put("session", session);
+        event.put("tag", info);
+        // Not retained: an event nobody is listening for is dropped rather than replayed later.
+        notifyListeners("tag", event, false);
+    }
+
+    /** Everything Android learned about the tag when it was discovered; no I/O. */
+    private static JSObject describe(int id, Tag tag) throws JSONException {
+        JSObject info = new JSObject();
+        info.put("tagId", id);
+        info.put("id", array(tag.getId()));
+        JSArray techs = new JSArray();
+        for (String tech : tag.getTechList()) techs.put(tech);
+        info.put("techTypes", techs);
+        Ndef ndef = Ndef.get(tag);
+        if (ndef != null) {
+            info.put("type", ndef.getType());
+            info.put("maxSize", ndef.getMaxSize());
+            info.put("isWritable", ndef.isWritable());
+            NdefMessage cached = ndef.getCachedNdefMessage();
+            if (cached != null) {
+                JSArray records = new JSArray();
+                for (NdefRecord record : cached.getRecords()) {
+                    JSObject entry = new JSObject();
+                    entry.put("tnf", record.getTnf());
+                    entry.put("type", array(record.getType()));
+                    entry.put("id", array(record.getId()));
+                    entry.put("payload", array(record.getPayload()));
+                    records.put(entry);
+                }
+                info.put("ndefMessage", records);
+            }
+        }
+        return info;
+    }
+
+    private boolean isPresent(int tagId) {
+        closeConnection();
+        Tag tag = tags.get(tagId);
+        NfcA nfcA = tag == null ? null : NfcA.get(tag);
+        if (nfcA == null) return false;
+        try {
+            nfcA.connect();
+            return true;
+        } catch (Exception e) {
+            return false;
+        } finally {
+            closeQuietly(nfcA);
+        }
+    }
+
+    private NfcA nfcA(int tagId) throws IOException {
+        if (connection instanceof NfcA && connectionTagId == tagId && isConnected(connection)) return (NfcA) connection;
+        closeConnection();
+        NfcA nfcA = NfcA.get(tag(tagId));
+        if (nfcA == null) throw new UnsupportedOperationException("This isn't an NFC-A tag.");
+        nfcA.connect();
+        connection = nfcA;
+        connectionTagId = tagId;
+        return nfcA;
+    }
+
+    private Tag tag(int tagId) throws TagLostException {
+        Tag tag = tags.get(tagId);
+        if (tag == null) throw new TagLostException("That tag is no longer available.");
+        return tag;
+    }
+
+    private void closeConnection() {
+        closeQuietly(connection);
+        connection = null;
+        connectionTagId = -1;
+    }
+
+    /** Closing a technology on a tag that has gone throws SecurityException, not just IOException. */
+    private static void closeQuietly(TagTechnology tech) {
+        if (tech == null) return;
+        try {
+            if (tech.isConnected()) tech.close();
+        } catch (Exception ignored) {
+            // The tag is gone; there is nothing left to release.
+        }
+    }
+
+    private static boolean isConnected(TagTechnology tech) {
+        try {
+            return tech.isConnected();
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void enableReader() {
+        Activity activity = getActivity();
+        NfcAdapter adapter = adapter();
+        if (activity == null || adapter == null || !readerWanted) return;
+        Bundle extras = new Bundle();
+        extras.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, PRESENCE_CHECK_DELAY_MS);
+        try {
+            adapter.enableReaderMode(activity, this::onTagDiscovered, READER_FLAGS, extras);
+        } catch (Exception e) {
+            Logger.warn(TAG, "Couldn't turn on reader mode: " + e.getMessage());
+        }
+    }
+
+    private void disableReader() {
+        Activity activity = getActivity();
+        NfcAdapter adapter = adapter();
+        if (activity == null || adapter == null) return;
+        try {
+            adapter.disableReaderMode(activity);
+        } catch (Exception e) {
+            Logger.warn(TAG, "Couldn't turn off reader mode: " + e.getMessage());
+        }
+    }
+
+    private NfcAdapter adapter() {
+        return NfcAdapter.getDefaultAdapter(getContext());
+    }
+
+    private static void reject(PluginCall call, Exception e) {
+        String code;
+        if (e instanceof TagLostException || e instanceof SecurityException) {
+            code = "TAG_LOST";
+        } else if (e instanceof IOException) {
+            // Includes a tag refusing a command (NAK).
+            code = "IO";
+        } else if (e instanceof FormatException) {
+            code = "FORMAT";
+        } else if (e instanceof UnsupportedOperationException) {
+            code = "UNSUPPORTED_TAG";
+        } else {
+            code = "FAILED";
+        }
+        String message = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+        call.reject(message, code, e);
+    }
+
+    private static byte[] bytes(JSArray array) {
+        if (array == null || array.length() == 0) throw new IllegalArgumentException("Expected a non-empty byte array.");
+        byte[] bytes = new byte[array.length()];
+        for (int i = 0; i < bytes.length; i++) {
+            int value = array.optInt(i, -1);
+            if (value < 0 || value > 255) throw new IllegalArgumentException("Byte values must be 0-255.");
+            bytes[i] = (byte) value;
+        }
+        return bytes;
+    }
+
+    private static JSArray array(byte[] bytes) {
+        JSArray array = new JSArray();
+        if (bytes != null) for (byte b : bytes) array.put(b & 0xff);
+        return array;
+    }
+}

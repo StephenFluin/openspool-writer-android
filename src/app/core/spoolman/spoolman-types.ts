@@ -51,6 +51,8 @@ export interface NewSpoolOptions {
   location: string;
   /** A spool that currently holds this tag and should give it up. */
   takeTagFrom?: SpoolmanSpool;
+  /** Called as soon as the spool exists, before the tag link that may still fail. */
+  onCreated?: (spool: SpoolmanSpool) => void;
 }
 
 export interface SyncResult {

@@ -9,10 +9,12 @@ export interface ProblemHelp {
   offerOverride: boolean;
   /** Retrying the same tag can't help when the tag itself is the problem. */
   retryLabel: string;
+  /** Whether a retry should use the tag still on the phone (a transient failure) or wait for a new one. */
+  reuseTag: boolean;
 }
 
 const FINDING_THE_ANTENNA_ANDROID =
-  'On most Android phones the NFC antenna is in the middle of the back, near the camera. Slowly slide the tag around there.';
+  'Android phones read tags in different spots: near the top by the camera on some, the middle of the back on others. Slowly slide the tag around.';
 const FINDING_THE_ANTENNA_IOS = 'On iPhone the NFC antenna is along the top edge. Touch the tag to the top of the phone.';
 const HOLD_STILL = 'Hold the tag flat against the phone and keep it still for a couple of seconds.';
 const USE_NTAG215 = 'Use NTAG215 or NTAG216 stickers (13.56 MHz, “NFC Forum Type 2”). They’re cheap and the U1 reads them reliably.';
@@ -27,6 +29,7 @@ export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boo
     offerSettings: false,
     offerOverride: false,
     retryLabel: TAG_PROBLEMS.has(error.code) ? 'Try another tag' : 'Try again',
+    reuseTag: !TAG_PROBLEMS.has(error.code),
     ...extra,
   });
 

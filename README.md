@@ -32,7 +32,24 @@ The payload follows what the firmware's two readers actually parse:
 - Temperatures are numeric strings, as in the OpenSpool spec. Both readers run them through `int()`.
 - The U1's reader reads exactly the NTAG215 page range, so the app blocks NTAG213 and other tags under ~400 bytes. You can override this with "Write anyway".
 
-In the native apps, each scan also asks the chip itself what it is: `GET_VERSION` for the model, page 3 for the NDEF header, and the lock and `AUTH0` bytes for locks and passwords (`src/app/core/nfc/type2.ts`). Check and the write error dialog show these findings. Blank NTAGs, and NTAGs where Android's NDEF writer fails, are written page by page and read back to verify.
+In the native apps, each scan also asks the chip what it is (`src/app/core/nfc/type2.ts`):
+
+- `GET_VERSION` gives the model.
+- Page 3 holds the NDEF header. It is one-time programmable, so the app only sets it up when its bits still allow it.
+- The lock bytes, `AUTH0`/`PROT` (passwords) and `MIRROR` (UID mirroring) show whether the tag can be written.
+
+Check and the write error dialog show these findings. Blank NTAGs, and NTAGs where Android's NDEF writer fails, are written page by page and read back to verify. The write order means an interrupted write never leaves a half-written message that looks valid.
+
+### NFC plugins
+
+- **Android** uses the app's own `TagReader` plugin (`android/app/src/main/java/io/fluin/u1tags/TagReaderPlugin.java`) for scanning and tag I/O. `@capgo/capacitor-nfc` has several problems there:
+  - It retains tag events and replays them to the next listener.
+  - It sends commands to whichever tag came last.
+  - After a raw command, it stops reporting tags until the app restarts.
+
+  `TagReader` addresses each tag by ID and settles every call. It also keeps reader mode on for a short grace period between scans, so a lifted tag isn't handed to the system. "Try again" reuses a tag that is still on the phone.
+- **iOS** uses `@capgo/capacitor-nfc`'s tag reader session. Its listeners are registered once, because the plugin replays events to new listeners. Before a write, only page 0 is read, because on iOS a refused command halts the tag for the rest of the session.
+- Both platforms share the read and write logic in `src/app/core/nfc/tag-ops.ts`. Its tests run against a simulated NTAG215 (`src/app/core/nfc/testing/fake-ntag.ts`).
 
 ### Spoolman
 
@@ -88,7 +105,7 @@ The native app avoids both.
 
 ```
 src/app/core/          filament model, OpenSpool encoding, catalog, settings
-src/app/core/nfc/      NfcService with native, Web NFC and mock backends; troubleshooting copy
+src/app/core/nfc/      NfcService; Android, iOS, Web NFC and mock backends; NTAG protocol; troubleshooting copy
 src/app/core/spoolman/ Spoolman REST client
 src/app/features/      write (form + write dialog/flow), check, settings, help
 src/app/shared/        accessible combobox, tag summary, NFC status banner

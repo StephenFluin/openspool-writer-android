@@ -30,7 +30,7 @@
         @if (s.error.tag; as tag) {
           <app-tag-diagnostics [tag]="tag" [error]="s.error" />
         }
-        <button type="button" class="button primary" (click)="scan()">{{ s.help.retryLabel }}</button>
+        <button type="button" class="button primary" (click)="scan(s.help.reuseTag)">{{ s.help.retryLabel }}</button>
       }
       @case ('result') {
         @if (verdict(); as v) {

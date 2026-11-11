@@ -1,4 +1,4 @@
-import { mapNativeError } from './native-nfc';
+import { mapNativeError } from './ios-nfc';
 import { helpFor } from './nfc-help';
 import { checkTagForWrite, NfcError, TagInfo, WriteRequest } from './nfc-types';
 import { guessChip } from './tag-info';

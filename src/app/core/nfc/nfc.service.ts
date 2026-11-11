@@ -3,8 +3,9 @@ import { Capacitor } from '@capacitor/core';
 import { Haptics, NotificationType } from '@capacitor/haptics';
 import { loadAntennaSpot } from './antenna';
 import { MOCK_SCENARIOS, MockNfcBackend, MockScenario } from './mock-nfc';
-import { NativeNfcBackend } from './native-nfc';
-import { NfcAvailability, NfcBackend, NfcError, TagInfo, WriteRequest } from './nfc-types';
+import { AndroidNfcBackend } from './android-nfc';
+import { IosNfcBackend } from './ios-nfc';
+import { NfcAvailability, NfcBackend, NfcError, ScanOptions, TagInfo, WriteRequest } from './nfc-types';
 import { WebNfcBackend } from './web-nfc';
 
 const SCAN_TIMEOUT_MS = 60_000;
@@ -37,12 +38,12 @@ export class NfcService {
     }
   }
 
-  read(signal: AbortSignal): Promise<TagInfo> {
-    return this.withTimeout((s) => this.backend.read(s), signal);
+  read(signal: AbortSignal, options?: ScanOptions): Promise<TagInfo> {
+    return this.withTimeout((s) => this.backend.read(s, options), signal);
   }
 
-  write(request: WriteRequest, signal: AbortSignal): Promise<TagInfo> {
-    return this.withTimeout((s) => this.backend.write(request, s), signal);
+  write(request: WriteRequest, signal: AbortSignal, options?: ScanOptions): Promise<TagInfo> {
+    return this.withTimeout((s) => this.backend.write(request, s, options), signal);
   }
 
   async openSettings(): Promise<void> {
@@ -62,18 +63,30 @@ export class NfcService {
     }
   }
 
+  /** Combines the caller's signal with a timeout by hand: AbortSignal.any() needs iOS 17.4. */
   private async withTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, signal: AbortSignal): Promise<T> {
-    const timeout = AbortSignal.timeout(SCAN_TIMEOUT_MS);
+    const combined = new AbortController();
+    let timedOut = false;
+    const forward = () => combined.abort();
+    const timer = setTimeout(() => {
+      timedOut = true;
+      combined.abort();
+    }, SCAN_TIMEOUT_MS);
+    if (signal.aborted) forward();
+    else signal.addEventListener('abort', forward, { once: true });
     try {
-      return await operation(AbortSignal.any([signal, timeout]));
+      return await operation(combined.signal);
     } catch (error) {
-      if (timeout.aborted && !signal.aborted) {
+      if (timedOut && !signal.aborted) {
         throw new NfcError('timeout', `No tag was found within ${SCAN_TIMEOUT_MS / 1000} seconds.`);
       }
       if (error instanceof NfcError && (error.code === 'disabled' || error.code === 'unsupported')) {
         void this.refresh();
       }
       throw error;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', forward);
     }
   }
 }
@@ -83,7 +96,14 @@ function createBackend(document: Document): NfcBackend {
     const scenario = mockScenario(document);
     if (scenario) return new MockNfcBackend(scenario);
   }
-  return Capacitor.isNativePlatform() ? new NativeNfcBackend() : new WebNfcBackend();
+  switch (Capacitor.getPlatform()) {
+    case 'android':
+      return new AndroidNfcBackend();
+    case 'ios':
+      return new IosNfcBackend();
+    default:
+      return new WebNfcBackend();
+  }
 }
 
 /** `?nfc=mock` or `?nfc=mock-<scenario>` turns on the simulated tag for the rest of the tab session. */

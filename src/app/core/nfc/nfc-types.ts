@@ -1,5 +1,5 @@
 import { FilamentSpec } from '../filament';
-import { ChipReport } from './type2';
+import { ChipReport, U1_USER_BYTES } from './type2';
 
 export type NfcAvailability = 'ready' | 'disabled' | 'unsupported' | 'web-unsupported' | 'permission-denied';
 
@@ -60,13 +60,21 @@ export class NfcError extends Error {
   }
 }
 
+export interface ScanOptions {
+  /**
+   * Use a tag that's still on the phone from the previous scan, as "Try again" expects. Android's
+   * reader doesn't report a tag again until it leaves and comes back.
+   */
+  reuse?: boolean;
+}
+
 export interface NfcBackend {
   readonly kind: 'native' | 'web' | 'mock';
   availability(): Promise<NfcAvailability>;
   /** Waits for a tag and returns what is on it. */
-  read(signal: AbortSignal): Promise<TagInfo>;
+  read(signal: AbortSignal, options?: ScanOptions): Promise<TagInfo>;
   /** Waits for a tag, checks it, writes the record and returns the tag as it was before writing. */
-  write(request: WriteRequest, signal: AbortSignal): Promise<TagInfo>;
+  write(request: WriteRequest, signal: AbortSignal, options?: ScanOptions): Promise<TagInfo>;
   /** Opens the system NFC settings, where the platform allows it. */
   openSettings?(): Promise<void>;
 }
@@ -91,11 +99,30 @@ export function checkTagForWrite(tag: TagInfo, request: WriteRequest): NfcError 
       tag,
     );
   }
+  if (/IsoDep|ISO7816|NfcB|NfcF|FeliCa/i.test(tech)) {
+    return new NfcError(
+      'incompatible',
+      /Ndef/.test(tech)
+        ? 'This is an NFC Type 4 tag (like an NTAG 424). The U1 reads NTAG215 and NTAG216 stickers.'
+        : 'This looks like a bank card, transit card or phone, not an NFC sticker. Move it away, and check your phone case for cards.',
+      tag,
+    );
+  }
   if (tag.chip?.passwordProtected) {
     return new NfcError('password', 'This tag is password protected, so it can’t be written.', tag);
   }
   if (tag.writable === false || tag.chip?.locked) {
     return new NfcError('read-only', 'This tag is locked (read-only) and can’t be rewritten.', tag);
+  }
+  if (tag.chip?.mirrored) {
+    return new NfcError(
+      'incompatible',
+      'This tag inserts its serial number or scan count into its memory, which would corrupt the spool data.',
+      tag,
+    );
+  }
+  if (tag.chip?.ccUsable === false) {
+    return new NfcError('incompatible', 'This tag’s NDEF header (page 3) is set up in a way the U1 can’t read, and it can’t be changed.', tag);
   }
   if (tag.capacity !== null && tag.capacity > 0 && tag.capacity < request.bytesNeeded) {
     return new NfcError(
@@ -103,6 +130,9 @@ export function checkTagForWrite(tag: TagInfo, request: WriteRequest): NfcError 
       `This tag holds ${tag.capacity} bytes but the spool data needs ${request.bytesNeeded}.`,
       tag,
     );
+  }
+  if (!request.allowIncompatible && request.bytesNeeded > U1_USER_BYTES) {
+    return new NfcError('incompatible', `The spool data needs ${request.bytesNeeded} bytes, more than the ${U1_USER_BYTES} the U1 reads.`, tag);
   }
   if (!request.allowIncompatible && tag.capacity !== null && tag.capacity > 0 && tag.capacity < MIN_U1_CAPACITY) {
     return new NfcError(
