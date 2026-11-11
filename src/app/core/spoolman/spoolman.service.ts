@@ -1,5 +1,5 @@
 import { HttpClient, HttpErrorResponse, httpResource } from '@angular/common/http';
-import { computed, DOCUMENT, inject, Service } from '@angular/core';
+import { computed, DOCUMENT, inject, resource, Service } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { firstValueFrom, timeout, TimeoutError } from 'rxjs';
 import { FilamentSpec, materialDefaults } from '../filament';
@@ -40,6 +40,13 @@ export class SpoolmanService {
     { defaultValue: [] },
   );
 
+  /** Locations for new spools: the Locations page's order first, then any other location a spool uses. */
+  readonly locations = resource({
+    params: () => (this.configured() ? this.baseUrl() : undefined),
+    loader: ({ params }) => this.loadLocations(params),
+    defaultValue: [],
+  });
+
   /** True when a browser (not the native app) would block this URL as mixed content. */
   isMixedContentBlocked(url = this.baseUrl()): boolean {
     return (
@@ -52,6 +59,15 @@ export class SpoolmanService {
 
   info(baseUrl = this.baseUrl()): Promise<SpoolmanInfo> {
     return this.request<SpoolmanInfo>('GET', '/info', undefined, baseUrl);
+  }
+
+  private async loadLocations(baseUrl: string): Promise<string[]> {
+    const [setting, used] = await Promise.all([
+      // Spoolman 0.22+ keeps the Locations page's list (including empty locations) in this setting.
+      this.request<{ value: string }>('GET', '/setting/locations', undefined, baseUrl).catch(() => undefined),
+      this.request<string[]>('GET', '/location', undefined, baseUrl),
+    ]);
+    return mergeLocations(decodeSettingList(setting?.value), used);
   }
 
   listSpools(): Promise<SpoolmanSpool[]> {
@@ -272,6 +288,26 @@ export function decodeCardUids(raw: string | undefined): string[] {
     .split(',')
     .map((uid) => uid.trim().toUpperCase())
     .filter(Boolean);
+}
+
+/** Unique, non-empty locations, keeping the first list's order. */
+export function mergeLocations(...lists: string[][]): string[] {
+  const seen = new Set<string>();
+  for (const location of lists.flat()) {
+    const trimmed = location.trim();
+    if (trimmed) seen.add(trimmed);
+  }
+  return [...seen];
+}
+
+/** Spoolman stores list settings as a JSON-encoded string, e.g. '["Shelf A"]'. */
+function decodeSettingList(raw: string | undefined): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 export function encodeCardUids(uids: string[]): string {

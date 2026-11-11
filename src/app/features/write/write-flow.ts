@@ -147,6 +147,7 @@ export class WriteFlow {
           : await this.spoolman.linkTagToSpool(target.spool, tag.uid, takeTagFrom);
       // Any further tags for this spool get linked to it rather than creating another spool.
       this.target = { kind: 'existing', spool: result.spool };
+      this.spoolman.locations.reload();
       this.finish(tag, result, null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -7,6 +7,7 @@ import {
   decodeCardUids,
   encodeCardUids,
   filamentName,
+  mergeLocations,
   normalizeSpoolmanUrl,
   SpoolmanService,
   spoolTagUids,
@@ -59,6 +60,14 @@ describe('Spoolman helpers', () => {
     expect(normalizeSpoolmanUrl('  ')).toBe('');
   });
 
+  it('merges locations without blanks or duplicates, keeping the first order', () => {
+    expect(mergeLocations(['Dry box', 'Shelf A'], ['Shelf A', ' ', 'Printer slot 2'])).toEqual([
+      'Dry box',
+      'Shelf A',
+      'Printer slot 2',
+    ]);
+  });
+
   it('names filaments by subtype and color', () => {
     expect(filamentName(spec)).toBe('Matte Red');
     expect(filamentName({ ...spec, subtype: 'Basic', colorName: '' })).toBe('#C12E1F');
@@ -87,8 +96,10 @@ describe('SpoolmanService', () => {
   });
 
   afterEach(() => {
-    // The vendor list behind the manufacturer picker loads on its own.
+    // The vendor and location lists behind the pickers load on their own.
     for (const request of http.match(`${BASE}/vendor`)) request.flush([]);
+    for (const request of http.match(`${BASE}/setting/locations`)) request.flush({ value: '[]' });
+    for (const request of http.match(`${BASE}/location`)) request.flush([]);
     http.verify();
   });
 
@@ -161,6 +172,19 @@ describe('SpoolmanService', () => {
     await answer('POST', '/spool/8/tag', { uid: UID });
 
     await expect(result).resolves.toMatchObject({ createdSpool: false, movedFrom: oldSpool });
+  });
+
+  it('lists the Locations page order first, then other locations spools use', async () => {
+    await answer('GET', '/setting/locations', { value: '["Dry box","Shelf A"]', is_set: true, type: 'array' });
+    await answer('GET', '/location', ['Shelf A', 'Printer slot 2']);
+    await vi.waitFor(() => expect(service.locations.value()).toEqual(['Dry box', 'Shelf A', 'Printer slot 2']));
+  });
+
+  it('still lists spool locations on Spoolman versions without the Locations setting', async () => {
+    const setting = await vi.waitFor(() => http.expectOne(`${BASE}/setting/locations`));
+    setting.flush({ detail: 'Not found' }, { status: 404, statusText: 'Not Found' });
+    await answer('GET', '/location', ['Shelf A']);
+    await vi.waitFor(() => expect(service.locations.value()).toEqual(['Shelf A']));
   });
 
   it('turns network failures into a readable message', async () => {

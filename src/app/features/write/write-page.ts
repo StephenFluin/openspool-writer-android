@@ -108,6 +108,9 @@ export class WritePage {
   // Spoolman
   protected readonly syncEnabled = linkedSignal(() => this.settings.spoolmanSync());
   protected readonly location = linkedSignal(() => this.settings.defaultLocation());
+  protected readonly locationOptions = computed<ComboOption[]>(() =>
+    (this.spoolman.locations.hasValue() ? this.spoolman.locations.value() : []).map((value) => ({ value })),
+  );
   protected readonly mode = this.draft.spoolmanMode;
   protected readonly existingSpool = this.draft.existingSpool;
   protected readonly spoolSearch = linkedSignal(() => {
@@ -135,10 +138,6 @@ export class WritePage {
 
   protected onSyncToggle(event: Event): void {
     this.syncEnabled.set((event.target as HTMLInputElement).checked);
-  }
-
-  protected onLocationInput(event: Event): void {
-    this.location.set((event.target as HTMLInputElement).value);
   }
 
   protected onMaterialChange(event: Event): void {

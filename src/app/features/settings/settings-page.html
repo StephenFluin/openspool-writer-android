@@ -41,7 +41,15 @@
 
     <div class="field">
       <label for="default-location">Default location for new spools <span class="optional">(optional)</span></label>
-      <input id="default-location" type="text" placeholder="e.g. Shelf" [formField]="f.defaultLocation" />
+      <app-combobox
+        inputId="default-location"
+        listLabel="Locations"
+        placeholder="Pick or type a location"
+        describedBy="default-location-hint"
+        [formField]="f.defaultLocation"
+        [options]="locationOptions()"
+      />
+      <p class="hint" id="default-location-hint">{{ locationHint() }}</p>
     </div>
 
     <div class="row">

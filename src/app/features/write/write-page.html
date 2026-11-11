@@ -187,12 +187,12 @@
         @if (mode() === 'new') {
           <div class="field">
             <label for="location">Location <span class="optional">(optional)</span></label>
-            <input
-              id="location"
-              type="text"
-              placeholder="e.g. Dry box 1"
-              [value]="location()"
-              (input)="onLocationInput($event)"
+            <app-combobox
+              inputId="location"
+              listLabel="Locations"
+              placeholder="Pick or type a location"
+              [(value)]="location"
+              [options]="locationOptions()"
             />
           </div>
           <p class="hint">

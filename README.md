@@ -43,6 +43,8 @@ When a Spoolman address is set, writing a tag also does the following:
 
 You can also link a tag to an existing spool, which fills the form from Spoolman.
 
+The location pickers (Settings and the Write page) list Spoolman's locations: the Locations page's order first, then any other location a spool uses. Typing a new name adds it.
+
 ## Development
 
 ```bash
