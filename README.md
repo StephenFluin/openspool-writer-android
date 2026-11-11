@@ -62,7 +62,10 @@ npm run catalog   # refresh public/catalog.json from SpoolmanDB
 ```bash
 npm run android   # build, sync, open Android Studio
 npm run ios       # build, sync, open Xcode
+npm run apk       # build a debug APK without Android Studio
 ```
+
+`npm run apk` writes `android/app/build/outputs/apk/debug/app-debug.apk`. It needs JDK 21 (`JAVA_HOME`) and the Android SDK (`ANDROID_HOME`) with platform 36.
 
 - **Android:** the app declares NFC and allows cleartext HTTP, so a plain `http://` Spoolman on the LAN works.
 - **iOS:** writing needs the *NFC Tag Reading* capability (`App/App.entitlements`, formats `NDEF` and `TAG`). The `TAG` session is the only way to get the tag UID that Spoolman links on. Your signing team must have that capability. Hold the tag to the top edge of the iPhone.
