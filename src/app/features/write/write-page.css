@@ -20,6 +20,36 @@
   cursor: pointer;
 }
 
+.quick-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.quick-colors button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.quick-colors button.clear {
+  background-image:
+    linear-gradient(45deg, #c9ccd1 25%, transparent 25%, transparent 75%, #c9ccd1 75%),
+    linear-gradient(45deg, #c9ccd1 25%, transparent 25%, transparent 75%, #c9ccd1 75%);
+  background-size: 12px 12px;
+  background-position: 0 0, 6px 6px;
+}
+
+.quick-colors button[aria-pressed='true'] {
+  box-shadow:
+    0 0 0 2px var(--surface),
+    0 0 0 5px var(--accent);
+}
+
 .hex-row {
   display: flex;
   align-items: center;

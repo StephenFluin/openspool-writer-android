@@ -77,6 +77,19 @@
           (picked)="pickColor($event)"
         />
       </div>
+      <div class="quick-colors" role="group" aria-label="Common colors">
+        @for (color of quickColors; track color.name) {
+          <button
+            type="button"
+            [class.clear]="color.name === 'Transparent'"
+            [style.background-color]="'#' + color.hex"
+            [attr.aria-label]="color.name"
+            [attr.aria-pressed]="swatch() === color.hex && spec().colorName === color.name"
+            [title]="color.name"
+            (click)="pickQuickColor(color)"
+          ></button>
+        }
+      </div>
       <div class="hex-row">
         <label for="hex">Hex</label>
         <input

@@ -63,27 +63,62 @@ export interface NamedColor {
   hex: string;
 }
 
-/** A generic palette for when the manufacturer has no catalog colors. */
+/** A generic palette, offered after the manufacturer's own catalog colors. */
 export const COMMON_COLORS: readonly NamedColor[] = [
   { name: 'Black', hex: '000000' },
   { name: 'White', hex: 'FFFFFF' },
   { name: 'Grey', hex: '8E9089' },
+  { name: 'Light Grey', hex: 'D1D3D5' },
+  { name: 'Dark Grey', hex: '545454' },
   { name: 'Silver', hex: 'A6A9AA' },
   { name: 'Red', hex: 'C12E1F' },
+  { name: 'Maroon', hex: '7A1F2B' },
   { name: 'Orange', hex: 'FF6A13' },
   { name: 'Yellow', hex: 'F4EE2A' },
   { name: 'Gold', hex: 'E4BD68' },
+  { name: 'Lime', hex: '8CC63F' },
   { name: 'Green', hex: '00AE42' },
   { name: 'Dark Green', hex: '164B35' },
+  { name: 'Olive', hex: '7A7A35' },
+  { name: 'Mint', hex: '98D8B5' },
+  { name: 'Teal', hex: '00827F' },
   { name: 'Cyan', hex: '0086D6' },
+  { name: 'Light Blue', hex: '7FB6E6' },
   { name: 'Blue', hex: '0A2989' },
+  { name: 'Navy', hex: '1F2A44' },
   { name: 'Purple', hex: '5E43B7' },
+  { name: 'Lavender', hex: 'B7A6DE' },
   { name: 'Pink', hex: 'F55A74' },
   { name: 'Magenta', hex: 'EC008C' },
+  { name: 'Peach', hex: 'F7B58C' },
   { name: 'Brown', hex: '9D432C' },
+  { name: 'Tan', hex: 'C8A27A' },
   { name: 'Beige', hex: 'F7E6DE' },
+  { name: 'Natural', hex: 'EDE6D6' },
+  { name: 'Bronze', hex: '8C6A3E' },
+  { name: 'Copper', hex: 'B87333' },
   { name: 'Transparent', hex: 'F0F0F0' },
 ];
+
+/** The everyday colors shown as one-tap swatches. */
+export const QUICK_COLORS: readonly NamedColor[] = [
+  'Black',
+  'White',
+  'Grey',
+  'Silver',
+  'Red',
+  'Orange',
+  'Yellow',
+  'Green',
+  'Cyan',
+  'Blue',
+  'Navy',
+  'Purple',
+  'Pink',
+  'Brown',
+  'Beige',
+  'Transparent',
+].map((name) => COMMON_COLORS.find((color) => color.name === name)!);
 
 export function materialDefaults(type: string): MaterialDefaults | undefined {
   const normalized = type.trim().toUpperCase();

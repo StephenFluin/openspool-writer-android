@@ -3,7 +3,7 @@ import { FieldTree, form, FormField, max, maxLength, min, required, submit, vali
 import { RouterLink } from '@angular/router';
 import { CatalogService } from '../../core/catalog.service';
 import { DraftService } from '../../core/draft.service';
-import { COMMON_COLORS, displayName, MATERIALS, normalizeHex, SUBTYPES } from '../../core/filament';
+import { COMMON_COLORS, displayName, MATERIALS, NamedColor, normalizeHex, QUICK_COLORS, SUBTYPES } from '../../core/filament';
 import { NfcService } from '../../core/nfc/nfc.service';
 import { buildOpenSpoolPayload, encodePayload, NTAG215_NDEF_BYTES, tagBytesNeeded } from '../../core/openspool';
 import { SettingsService } from '../../core/settings.service';
@@ -144,6 +144,12 @@ export class WritePage {
     const choice = (event.target as HTMLSelectElement).value;
     this.materialChoice.set(choice);
     this.draft.setMaterial(choice === OTHER_MATERIAL ? '' : choice);
+  }
+
+  protected readonly quickColors = QUICK_COLORS;
+
+  protected pickQuickColor(color: NamedColor): void {
+    this.draft.patch({ colorName: color.name, colorHex: color.hex });
   }
 
   protected pickColor(option: ComboOption): void {
