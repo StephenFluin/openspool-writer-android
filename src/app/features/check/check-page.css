@@ -1,0 +1,82 @@
+.scanning {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.spinner {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.verdict {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+  background: var(--success-soft);
+  font-weight: 600;
+}
+
+.verdict.bad {
+  background: var(--danger-soft);
+}
+
+.contents {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1rem 0 0.5rem;
+}
+
+.swatch {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+
+.callout {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+}
+
+.callout h3 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.callout ul {
+  margin: 0;
+  padding-inline-start: 1.25rem;
+}
+
+.callout.success {
+  background: var(--success-soft);
+}
+
+.callout.danger {
+  background: var(--danger-soft);
+}
+
+.button {
+  margin-top: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 3s;
+  }
+}

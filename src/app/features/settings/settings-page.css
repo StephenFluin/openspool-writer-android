@@ -1,0 +1,54 @@
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.optional {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.callout {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+}
+
+.callout.success {
+  background: var(--success-soft);
+}
+
+.callout.danger {
+  background: var(--danger-soft);
+}
+
+.callout.warning {
+  background: var(--warning-soft);
+}
+
+dl {
+  margin: 0 0 0.5rem;
+}
+
+dl div {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+dt {
+  min-width: 4.5rem;
+  color: var(--text-muted);
+}
+
+dd {
+  margin: 0;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  word-break: break-all;
+}

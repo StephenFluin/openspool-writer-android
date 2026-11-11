@@ -1,0 +1,263 @@
+<app-nfc-status-banner />
+
+<form class="stack" novalidate (submit)="write($event)">
+  <section class="card" aria-labelledby="filament-heading">
+    <h2 id="filament-heading">Filament</h2>
+
+    <div class="field">
+      <label for="material">Type</label>
+      <select id="material" [value]="materialChoice()" (change)="onMaterialChange($event)">
+        @for (material of materials; track material.type) {
+          <option [value]="material.type">{{ material.label }}</option>
+        }
+        <option [value]="otherMaterial">Other…</option>
+      </select>
+    </div>
+
+    @if (materialChoice() === otherMaterial) {
+      <div class="field">
+        <label for="material-custom">Material name</label>
+        <input
+          id="material-custom"
+          type="text"
+          autocapitalize="characters"
+          placeholder="e.g. PPS, PLA+, PET-CF"
+          aria-describedby="material-error"
+          [formField]="f.material"
+          [attr.aria-invalid]="!!error(f.material)"
+        />
+        @if (error(f.material); as message) {
+          <p class="error" id="material-error">{{ message }}</p>
+        }
+      </div>
+    }
+
+    <div class="field">
+      <label for="subtype">Subtype</label>
+      <app-combobox
+        inputId="subtype"
+        listLabel="Subtypes"
+        placeholder="Basic, Matte, Silk…"
+        [formField]="f.subtype"
+        [options]="subtypeOptions"
+      />
+    </div>
+
+    <div class="field">
+      <label for="brand">Manufacturer</label>
+      <app-combobox
+        inputId="brand"
+        listLabel="Manufacturers"
+        placeholder="Search or type a brand"
+        describedBy="brand-hint"
+        [formField]="f.brand"
+        [options]="brandOptions()"
+      />
+      <p class="hint" id="brand-hint">Leave blank for “Generic”.</p>
+    </div>
+
+    <div class="field">
+      <label for="color">Color</label>
+      <div class="color-row">
+        <input
+          type="color"
+          class="color-picker"
+          aria-label="Pick a custom color"
+          [value]="'#' + (swatch() ?? 'ffffff').toLowerCase()"
+          (input)="onColorInput($event)"
+        />
+        <app-combobox
+          class="grow"
+          inputId="color"
+          listLabel="Colors"
+          placeholder="Search colors or type a name"
+          describedBy="color-hint"
+          [formField]="f.colorName"
+          [options]="colorOptions()"
+          (picked)="pickColor($event)"
+        />
+      </div>
+      <div class="hex-row">
+        <label for="hex">Hex</label>
+        <input
+          id="hex"
+          type="text"
+          class="hex"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="characters"
+          placeholder="FF6A13"
+          aria-describedby="color-hint color-error"
+          [formField]="f.colorHex"
+          [attr.aria-invalid]="!!error(f.colorHex)"
+        />
+      </div>
+      @if (error(f.colorHex); as message) {
+        <p class="error" id="color-error">{{ message }}</p>
+      }
+      <p class="hint" id="color-hint">
+        @if (brandColorCount()) {
+          {{ brandColorCount() }} {{ spec().brand }} colors listed first.
+        }
+        The tag stores the hex color; the name is used in Spoolman.
+      </p>
+    </div>
+  </section>
+
+  <details class="card">
+    <summary>Temperatures and spool weight</summary>
+    <div class="grid">
+      <div class="field">
+        <label for="nozzle-min">Nozzle min (°C)</label>
+        <input
+          id="nozzle-min"
+          type="number"
+          inputmode="numeric"
+          aria-describedby="nozzle-min-error temp-hint"
+          [formField]="f.nozzleMin"
+          [attr.aria-invalid]="!!error(f.nozzleMin)"
+        />
+        @if (error(f.nozzleMin); as message) {
+          <p class="error" id="nozzle-min-error">{{ message }}</p>
+        }
+      </div>
+      <div class="field">
+        <label for="nozzle-max">Nozzle max (°C)</label>
+        <input
+          id="nozzle-max"
+          type="number"
+          inputmode="numeric"
+          aria-describedby="nozzle-max-error"
+          [formField]="f.nozzleMax"
+          [attr.aria-invalid]="!!error(f.nozzleMax)"
+        />
+        @if (error(f.nozzleMax); as message) {
+          <p class="error" id="nozzle-max-error">{{ message }}</p>
+        }
+      </div>
+      <div class="field">
+        <label for="bed">Bed (°C)</label>
+        <input
+          id="bed"
+          type="number"
+          inputmode="numeric"
+          aria-describedby="bed-error"
+          [formField]="f.bedTemp"
+          [attr.aria-invalid]="!!error(f.bedTemp)"
+        />
+        @if (error(f.bedTemp); as message) {
+          <p class="error" id="bed-error">{{ message }}</p>
+        }
+      </div>
+      <div class="field">
+        <label for="weight">Filament weight (g)</label>
+        <input id="weight" type="number" inputmode="numeric" step="50" [formField]="f.weight" />
+      </div>
+    </div>
+    <p class="hint" id="temp-hint">
+      Filled in from the material and, when known, the manufacturer’s recommendation. The U1 uses the minimum
+      nozzle temperature as the print temperature.
+    </p>
+  </details>
+
+  @if (spoolman.configured()) {
+    <section class="card" aria-labelledby="spoolman-heading">
+      <h2 id="spoolman-heading">Spoolman</h2>
+      <label class="check">
+        <input type="checkbox" [checked]="syncEnabled()" (change)="onSyncToggle($event)" />
+        Link this tag in Spoolman
+      </label>
+      @if (syncEnabled()) {
+        <fieldset class="segmented">
+          <legend class="visually-hidden">Which spool</legend>
+          <label>
+            <input type="radio" name="spoolman-mode" [checked]="mode() === 'new'" (change)="setMode('new')" />
+            New spool
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="spoolman-mode"
+              [checked]="mode() === 'existing'"
+              (change)="setMode('existing')"
+            />
+            Existing spool
+          </label>
+        </fieldset>
+        @if (mode() === 'new') {
+          <div class="field">
+            <label for="location">Location <span class="optional">(optional)</span></label>
+            <input
+              id="location"
+              type="text"
+              placeholder="e.g. Dry box 1"
+              [value]="location()"
+              (input)="onLocationInput($event)"
+            />
+          </div>
+          <p class="hint">
+            After the tag is written, a spool is added to Spoolman. Existing vendors and filaments are reused.
+          </p>
+        } @else {
+          <div class="field">
+            <label for="spool">Spool</label>
+            <app-combobox
+              inputId="spool"
+              listLabel="Spools"
+              placeholder="Search your spools"
+              describedBy="spool-hint spool-error"
+              [(value)]="spoolSearch"
+              [options]="spoolOptions()"
+              [invalid]="spoolMissing()"
+              (picked)="pickSpool($event)"
+            />
+            @if (spools.isLoading()) {
+              <p class="hint">Loading spools…</p>
+            }
+            @if (spools.error(); as loadError) {
+              <p class="error">{{ loadError.message }}</p>
+            }
+            @if (spoolMissing()) {
+              <p class="error" id="spool-error">Choose a spool, or switch to “New spool”.</p>
+            }
+            <p class="hint" id="spool-hint">Choosing a spool fills in the form from Spoolman.</p>
+          </div>
+        }
+      }
+    </section>
+  } @else {
+    <p class="card subtle">
+      Keep an inventory? <a routerLink="/settings">Connect Spoolman</a> and each tag you write is added as a spool.
+    </p>
+  }
+
+  <section class="card preview" aria-labelledby="preview-heading">
+    <h2 id="preview-heading">What the U1 will see</h2>
+    <div class="spool-line">
+      <span
+        class="swatch large"
+        aria-hidden="true"
+        [class.empty]="!swatch()"
+        [style.background]="swatch() ? '#' + swatch() : null"
+      ></span>
+      <div>
+        <strong>{{ title() }}</strong>
+        <div class="muted">{{ spec().colorName || (swatch() ? '#' + swatch() : 'No color chosen') }}</div>
+      </div>
+    </div>
+    <p class="muted">
+      Nozzle {{ spec().nozzleMin }}–{{ spec().nozzleMax }} °C · Bed {{ spec().bedTemp }} °C · {{ spec().weight }} g
+    </p>
+    <p class="muted">Uses {{ bytesNeeded() }} of the {{ tagCapacity }} bytes on an NTAG215 tag.</p>
+    <details>
+      <summary>Raw tag data (OpenSpool JSON)</summary>
+      <pre>{{ payloadJson() }}</pre>
+    </details>
+  </section>
+
+  <div class="submit-bar">
+    <button type="submit" class="button primary big">Write tag</button>
+  </div>
+</form>
+
+<app-write-dialog />

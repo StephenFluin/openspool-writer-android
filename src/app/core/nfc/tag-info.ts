@@ -1,0 +1,22 @@
+import { OPENSPOOL_MIME, parseOpenSpool } from '../openspool';
+import { TagRecord } from './nfc-types';
+
+/** Best guess at the NXP chip from the NDEF capacity the platform reports. */
+export function guessChip(capacity: number | null, fallback: string | null): string | null {
+  if (capacity === null || capacity <= 0) return fallback;
+  if (capacity <= 48) return 'MIFARE Ultralight';
+  if (capacity <= 150) return 'NTAG213';
+  if (capacity >= 480 && capacity <= 540) return 'NTAG215';
+  if (capacity >= 850 && capacity <= 900) return 'NTAG216';
+  return fallback;
+}
+
+export function findOpenSpool(records: TagRecord[]) {
+  for (const record of records) {
+    if (record.mediaType === OPENSPOOL_MIME) {
+      const spec = parseOpenSpool(record.data);
+      if (spec) return spec;
+    }
+  }
+  return null;
+}

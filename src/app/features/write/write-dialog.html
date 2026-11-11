@@ -1,0 +1,148 @@
+<dialog #dialog aria-labelledby="write-dialog-title" (cancel)="onCancel($event)">
+  <p class="visually-hidden" role="status">{{ announcement() }}</p>
+
+  @let s = state();
+  @switch (s.step) {
+    @case ('scanning') {
+      <div class="art" aria-hidden="true">
+        <svg viewBox="0 0 120 120" width="120" height="120">
+          <rect x="34" y="14" width="52" height="92" rx="9" class="phone" />
+          <circle cx="60" cy="56" r="10" class="wave w1" />
+          <circle cx="60" cy="56" r="10" class="wave w2" />
+          <circle cx="60" cy="56" r="10" class="wave w3" />
+          <rect x="44" y="44" width="32" height="24" rx="4" class="tag" />
+        </svg>
+      </div>
+      <h2 id="write-dialog-title">Hold the tag to your phone</h2>
+      <p>
+        @if (isIos) {
+          Touch the tag to the top edge of your iPhone and hold it there.
+        } @else {
+          Hold the tag flat against the back of your phone, near the camera, and keep it still.
+        }
+      </p>
+      @if (s.slow) {
+        <div class="callout">
+          <h3>Not finding it?</h3>
+          <ul>
+            <li>Move the tag slowly around the back of the phone. The antenna’s exact spot varies.</li>
+            <li>Remove thick, metal or magnetic phone cases.</li>
+            <li>Make sure NFC is turned on, and that it’s a 13.56 MHz NFC tag.</li>
+          </ul>
+        </div>
+      }
+      <div class="actions">
+        <button type="button" class="button" (click)="flow.cancel()">Cancel</button>
+      </div>
+    }
+
+    @case ('error') {
+      <div class="badge error" aria-hidden="true">!</div>
+      <h2 id="write-dialog-title">{{ s.help.title }}</h2>
+      @if (s.help.tips.length) {
+        <ul class="tips">
+          @for (tip of s.help.tips; track tip) {
+            <li>{{ tip }}</li>
+          }
+        </ul>
+      }
+      @if (s.error.tag; as tag) {
+        <app-tag-summary [tag]="tag" />
+      }
+      <div class="actions">
+        <button type="button" class="button primary" (click)="flow.retry()">Try again</button>
+        @if (s.help.offerOverride) {
+          <button type="button" class="button" (click)="flow.writeAnyway()">Write anyway</button>
+        }
+        @if (s.help.offerSettings && nfc.canOpenSettings) {
+          <button type="button" class="button" (click)="openSettings()">Open NFC settings</button>
+        }
+        <button type="button" class="button quiet" (click)="flow.cancel()">Close</button>
+      </div>
+    }
+
+    @case ('syncing') {
+      <div class="badge success" aria-hidden="true">✓</div>
+      <h2 id="write-dialog-title">Tag written</h2>
+      <p class="progress"><span class="spinner" aria-hidden="true"></span> Updating Spoolman…</p>
+      <p class="note">You can take the tag away from the phone now.</p>
+    }
+
+    @case ('conflict') {
+      <div class="badge warning" aria-hidden="true">?</div>
+      <h2 id="write-dialog-title">This tag belongs to another spool</h2>
+      <p>
+        The tag is written. In Spoolman it’s linked to <strong>{{ describeSpool(s.owner) }}</strong>. Move
+        it to this spool? The U1 would otherwise keep loading the old spool when it sees this tag.
+      </p>
+      <div class="actions">
+        <button type="button" class="button primary" (click)="flow.resolveConflict(true)">Move the tag here</button>
+        <button type="button" class="button" (click)="flow.resolveConflict(false)">Leave Spoolman unchanged</button>
+      </div>
+    }
+
+    @case ('done') {
+      <div class="badge success" aria-hidden="true">✓</div>
+      <h2 id="write-dialog-title">
+        Tag written
+        @if (flow.writtenCount() > 1) {
+          ({{ flow.writtenCount() }} tags for this spool)
+        }
+      </h2>
+      <p class="spool-line">
+        <span class="swatch" aria-hidden="true" [style.background]="'#' + spec().colorHex"></span>
+        <span>
+          <strong>{{ title() }}</strong>
+          @if (spec().colorName) {
+            · {{ spec().colorName }}
+          }
+        </span>
+      </p>
+      <app-tag-summary [tag]="s.tag" />
+      @if (s.tag.openSpool; as previous) {
+        <p class="note">Replaced: {{ previous.brand || 'Generic' }} {{ previous.material }} {{ previous.subtype }} (#{{ previous.colorHex }})</p>
+      }
+
+      @if (s.sync; as sync) {
+        <div class="callout success">
+          <p>
+            @if (sync.createdSpool) {
+              Added <strong>spool #{{ sync.spool.id }}</strong> to Spoolman
+              @if (sync.createdFilament) {
+                (with a new filament type)
+              }
+            } @else {
+              Linked to <strong>spool #{{ sync.spool.id }}</strong> in Spoolman
+            }
+            @if (sync.movedFrom; as from) {
+              and unlinked it from spool #{{ from.id }}
+            }.
+          </p>
+          <a [href]="spoolLink(sync.spool)" target="_blank" rel="noopener">Open in Spoolman</a>
+        </div>
+      }
+      @if (s.syncNote) {
+        <div class="callout" [class.danger]="s.syncFailed">
+          <p>
+            @if (s.syncFailed) {
+              <strong>The tag is fine, but Spoolman wasn’t updated.</strong>
+            }
+            {{ s.syncNote }}
+          </p>
+          @if (s.syncFailed) {
+            <button type="button" class="button" (click)="flow.retrySync()">Retry Spoolman</button>
+          }
+        </div>
+      }
+
+      <p class="note">
+        The U1 reads the tag on the side of the spool that faces the printer. If you load this spool from either
+        side, put a tag on both sides.
+      </p>
+      <div class="actions">
+        <button type="button" class="button primary" (click)="flow.cancel()">Done</button>
+        <button type="button" class="button" (click)="flow.writeAnother()">Write another tag for this spool</button>
+      </div>
+    }
+  }
+</dialog>

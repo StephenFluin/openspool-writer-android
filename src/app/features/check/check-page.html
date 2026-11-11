@@ -1,0 +1,94 @@
+<app-nfc-status-banner />
+
+<section class="card" aria-labelledby="check-heading">
+  <h2 id="check-heading">Check a tag</h2>
+  <p>
+    Read a tag to see what’s on it, whether the U1 can use it, and which Spoolman spool it belongs to. Handy for
+    figuring out why the printer isn’t picking up a spool.
+  </p>
+
+  <div aria-live="polite">
+    @let s = state();
+    @switch (s.step) {
+      @case ('scanning') {
+        <div class="scanning">
+          <span class="spinner" aria-hidden="true"></span>
+          <p>Hold the tag to your phone…</p>
+        </div>
+        <button type="button" class="button" (click)="cancel()">Cancel</button>
+      }
+      @case ('error') {
+        <div class="callout danger">
+          <h3>{{ s.help.title }}</h3>
+          <ul>
+            @for (tip of s.help.tips; track tip) {
+              <li>{{ tip }}</li>
+            }
+          </ul>
+        </div>
+        <button type="button" class="button primary" (click)="scan()">Try again</button>
+      }
+      @case ('result') {
+        @if (verdict(); as v) {
+          <p class="verdict" [class.bad]="!v.ok">
+            <span aria-hidden="true">{{ v.ok ? '✓' : '✕' }}</span>
+            {{ v.text }}
+          </p>
+        }
+        <app-tag-summary [tag]="s.tag" />
+
+        @if (contents(); as spec) {
+          <div class="contents">
+            <span class="swatch" aria-hidden="true" [style.background]="'#' + spec.colorHex"></span>
+            <div>
+              <strong>{{ title(spec) }}</strong>
+              <div class="muted">
+                #{{ spec.colorHex }}
+                @if (spec.nozzleMin) {
+                  · Nozzle {{ spec.nozzleMin }}–{{ spec.nozzleMax }} °C
+                }
+                @if (spec.bedTemp) {
+                  · Bed {{ spec.bedTemp }} °C
+                }
+              </div>
+            </div>
+          </div>
+          <button type="button" class="button" (click)="edit(spec)">Edit and rewrite this tag</button>
+        } @else if (s.tag.records.length) {
+          <p class="muted">
+            {{ s.tag.records.length }} record(s) of another type
+            @if (s.tag.records[0].mediaType; as type) {
+              ({{ type }})
+            }
+            .
+          </p>
+        }
+
+        @let o = owner();
+        @switch (o.status) {
+          @case ('loading') {
+            <p class="muted">Looking the tag up in Spoolman…</p>
+          }
+          @case ('found') {
+            @if (o.spool; as found) {
+              <div class="callout success">
+                <p>Linked in Spoolman to <strong>{{ describeSpool(found) }}</strong>.</p>
+                <button type="button" class="button" (click)="useSpool(found)">Write a tag for this spool</button>
+              </div>
+            } @else {
+              <p class="muted">Not linked to any spool in Spoolman.</p>
+            }
+          }
+          @case ('error') {
+            <p class="error">{{ o.message }}</p>
+          }
+        }
+
+        <button type="button" class="button primary" (click)="scan()">Check another tag</button>
+      }
+      @default {
+        <button type="button" class="button primary big" (click)="scan()">Scan a tag</button>
+      }
+    }
+  </div>
+</section>

@@ -1,0 +1,101 @@
+<form class="stack" novalidate (submit)="save($event)">
+  <section class="card" aria-labelledby="spoolman-heading">
+    <h2 id="spoolman-heading">Spoolman</h2>
+    <p class="muted">
+      Optional. Connect your <a href="https://github.com/Donkie/Spoolman" target="_blank" rel="noopener">Spoolman</a>
+      server and every tag you write is added as a spool and linked by its UID, the same way the U1’s Spoolman
+      integration looks spools up.
+    </p>
+
+    <div class="field">
+      <label for="spoolman-url">Spoolman address</label>
+      <input
+        id="spoolman-url"
+        type="url"
+        inputmode="url"
+        autocomplete="off"
+        autocapitalize="off"
+        spellcheck="false"
+        placeholder="http://192.168.1.20:7912"
+        aria-describedby="spoolman-url-hint spoolman-url-error"
+        [formField]="f.spoolmanUrl"
+        [attr.aria-invalid]="f.spoolmanUrl().touched() && f.spoolmanUrl().invalid()"
+      />
+      @if (f.spoolmanUrl().touched() && f.spoolmanUrl().invalid()) {
+        <p class="error" id="spoolman-url-error">{{ f.spoolmanUrl().errors()[0].message }}</p>
+      }
+      <p class="hint" id="spoolman-url-hint">Include the port (Spoolman uses 7912 by default). Leave empty to turn Spoolman off.</p>
+    </div>
+
+    @if (mixedContent()) {
+      <div class="callout warning" role="note">
+        This page is served over https, so the browser will block an <code>http://</code> Spoolman. Use the
+        Android/iOS app, or serve Spoolman over https.
+      </div>
+    }
+
+    <label class="check">
+      <input type="checkbox" [formField]="f.spoolmanSync" />
+      Link new tags in Spoolman by default
+    </label>
+
+    <div class="field">
+      <label for="default-location">Default location for new spools <span class="optional">(optional)</span></label>
+      <input id="default-location" type="text" placeholder="e.g. Shelf" [formField]="f.defaultLocation" />
+    </div>
+
+    <div class="row">
+      <button type="submit" class="button primary">Save</button>
+      @if (normalizedUrl()) {
+        <button type="button" class="button" (click)="testConnection()">Test connection</button>
+      }
+    </div>
+
+    <div aria-live="polite">
+      @let t = test();
+      @switch (t.status) {
+        @case ('testing') {
+          <p class="muted">Connecting to {{ normalizedUrl() }}…</p>
+        }
+        @case ('ok') {
+          <p class="callout success">Connected to Spoolman {{ t.version }}. Settings saved.</p>
+        }
+        @case ('error') {
+          <p class="callout danger">{{ t.message }}</p>
+        }
+      }
+    </div>
+
+    @if (isWeb) {
+      <details>
+        <summary>Using the web version?</summary>
+        <p>
+          Spoolman must allow requests from this page’s origin. Start Spoolman with
+          <code>SPOOLMAN_CORS_ORIGIN={{ origin }}</code>, or use the app, which doesn’t have this restriction.
+        </p>
+      </details>
+    }
+  </section>
+
+  <section class="card" aria-labelledby="nfc-heading">
+    <h2 id="nfc-heading">NFC</h2>
+    <dl>
+      <div><dt>Status</dt><dd>{{ nfcLabel() }}</dd></div>
+      <div><dt>Using</dt><dd>{{ nfcBackend }}</dd></div>
+    </dl>
+    @if (nfc.availability() === 'disabled' && nfc.canOpenSettings) {
+      <button type="button" class="button" (click)="nfc.openSettings()">Open NFC settings</button>
+    }
+  </section>
+
+  <section class="card" aria-labelledby="about-heading">
+    <h2 id="about-heading">About</h2>
+    <p class="muted">
+      Tags use the <a href="https://openspool.io" target="_blank" rel="noopener">OpenSpool</a> format, as read by the
+      <a href="https://github.com/paxx12-snapmaker-u1/SnapmakerU1-Extended-Firmware" target="_blank" rel="noopener"
+        >Snapmaker U1 Extended Firmware</a
+      >. Manufacturer and color suggestions come from
+      <a href="https://github.com/Donkie/SpoolmanDB" target="_blank" rel="noopener">SpoolmanDB</a> (MIT).
+    </p>
+  </section>
+</form>
