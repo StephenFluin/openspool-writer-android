@@ -1,6 +1,7 @@
 import { DOCUMENT, isDevMode, inject, Service, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { Haptics, NotificationType } from '@capacitor/haptics';
+import { loadAntennaSpot } from './antenna';
 import { MOCK_SCENARIOS, MockNfcBackend, MockScenario } from './mock-nfc';
 import { NativeNfcBackend } from './native-nfc';
 import { NfcAvailability, NfcBackend, NfcError, TagInfo, WriteRequest } from './nfc-types';
@@ -20,6 +21,8 @@ export class NfcService {
 
   constructor() {
     void this.refresh();
+    // Ready before the first scan, so the "hold it here" diagram doesn't pop in late.
+    void loadAntennaSpot();
     // Users often flip NFC on in system settings and come back.
     this.document.addEventListener('visibilitychange', () => {
       if (this.document.visibilityState === 'visible') void this.refresh();

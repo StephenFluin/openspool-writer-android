@@ -139,50 +139,6 @@ app-tag-summary {
   justify-content: center;
 }
 
-.art .phone {
-  fill: var(--surface-alt);
-  stroke: var(--text-muted);
-  stroke-width: 3;
-}
-
-.art .tag {
-  fill: var(--accent);
-  animation: hover 2.4s ease-in-out infinite;
-}
-
-.art .wave {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 2;
-  opacity: 0;
-  animation: pulse 2.4s ease-out infinite;
-}
-
-.art .w2 {
-  animation-delay: 0.8s;
-}
-
-.art .w3 {
-  animation-delay: 1.6s;
-}
-
-@keyframes pulse {
-  0% {
-    r: 10;
-    opacity: 0.8;
-  }
-  100% {
-    r: 46;
-    opacity: 0;
-  }
-}
-
-@keyframes hover {
-  50% {
-    transform: translateY(-3px);
-  }
-}
-
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -190,13 +146,8 @@ app-tag-summary {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .art .wave,
-  .art .tag,
   .spinner {
     animation-duration: 0s;
     animation-iteration-count: 1;
-  }
-  .art .wave {
-    opacity: 0.4;
   }
 }

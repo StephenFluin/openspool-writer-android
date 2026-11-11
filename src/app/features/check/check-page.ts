@@ -10,6 +10,7 @@ import { encodePayload, OPENSPOOL_MIME, tagBytesNeeded } from '../../core/opensp
 import { describeSpool, SpoolmanService } from '../../core/spoolman/spoolman.service';
 import { SpoolmanSpool } from '../../core/spoolman/spoolman-types';
 import { NfcStatusBanner } from '../../shared/nfc-status-banner';
+import { PhoneAntenna } from '../../shared/phone-antenna';
 import { TagDiagnostics } from '../../shared/tag-diagnostics';
 import { TagSummary } from '../../shared/tag-summary';
 
@@ -41,7 +42,7 @@ const TYPICAL_BYTES = tagBytesNeeded(
 
 @Component({
   selector: 'app-check-page',
-  imports: [TagSummary, TagDiagnostics, NfcStatusBanner],
+  imports: [TagSummary, TagDiagnostics, NfcStatusBanner, PhoneAntenna],
   templateUrl: './check-page.html',
   styleUrl: './check-page.css',
 })

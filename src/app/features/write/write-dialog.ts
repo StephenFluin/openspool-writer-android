@@ -1,17 +1,17 @@
 import { Component, computed, effect, ElementRef, inject, viewChild } from '@angular/core';
-import { Capacitor } from '@capacitor/core';
 import { DraftService } from '../../core/draft.service';
 import { displayName } from '../../core/filament';
 import { NfcService } from '../../core/nfc/nfc.service';
 import { describeSpool, SpoolmanService } from '../../core/spoolman/spoolman.service';
 import { SpoolmanSpool } from '../../core/spoolman/spoolman-types';
+import { PhoneAntenna } from '../../shared/phone-antenna';
 import { TagDiagnostics } from '../../shared/tag-diagnostics';
 import { TagSummary } from '../../shared/tag-summary';
 import { WriteFlow } from './write-flow';
 
 @Component({
   selector: 'app-write-dialog',
-  imports: [TagSummary, TagDiagnostics],
+  imports: [TagSummary, TagDiagnostics, PhoneAntenna],
   templateUrl: './write-dialog.html',
   styleUrl: './write-dialog.css',
 })
@@ -23,7 +23,6 @@ export class WriteDialog {
 
   private readonly dialog = viewChild.required<ElementRef<HTMLDialogElement>>('dialog');
   protected readonly state = this.flow.state;
-  protected readonly isIos = Capacitor.getPlatform() === 'ios';
   protected readonly spec = this.draft.spec;
   protected readonly title = computed(() => displayName(this.spec()));
   protected readonly describeSpool = describeSpool;
