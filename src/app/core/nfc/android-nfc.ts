@@ -14,11 +14,14 @@ interface TagEvent {
 
 /** The app's own Android plugin (android/app/src/main/java/io/fluin/u1tags/TagReaderPlugin.java). */
 export interface TagReaderPlugin {
-  start(options: { session: number; reusePresent: boolean }): Promise<void>;
+  /** reuseTagId: a tag from an earlier scan to report again if it's still on the phone (-1 for none). */
+  start(options: { session: number; reuseTagId: number }): Promise<void>;
   stop(): Promise<void>;
   transceive(options: { tagId: number; data: number[]; timeout?: number }): Promise<{ response: number[] }>;
   writeNdef(options: { tagId: number; message: number[]; format: boolean }): Promise<void>;
   addListener(eventName: 'tag', listener: (event: TagEvent) => void): Promise<PluginListenerHandle>;
+  /** NFC was turned off during a scan. */
+  addListener(eventName: 'disabled', listener: (event: { session: number }) => void): Promise<PluginListenerHandle>;
 }
 
 const TagReader = registerPlugin<TagReaderPlugin>('TagReader');
@@ -32,8 +35,10 @@ export class AndroidNfcBackend implements NfcBackend {
   readonly kind = 'native';
   private readonly queue = new ScanQueue();
   private session = 0;
-  private onTag: ((event: TagEvent) => void) | null = null;
-  private listening: Promise<PluginListenerHandle> | null = null;
+  private handlers: { tag(event: TagEvent): void; disabled(event: { session: number }): void } | null = null;
+  private listening: Promise<unknown> | null = null;
+  /** The tag the last scan failed on, which a retry may reuse while it's still on the phone. */
+  private failedTagId = -1;
 
   constructor(
     private readonly reader: TagReaderPlugin = TagReader,
@@ -45,11 +50,11 @@ export class AndroidNfcBackend implements NfcBackend {
   }
 
   read(signal: AbortSignal, options?: ScanOptions): Promise<TagInfo> {
-    return this.queue.run(() => this.scan(signal, options, (tag, link) => readTag(link, tag)));
+    return this.queue.run(signal, () => this.scan(signal, options, (tag, link) => readTag(link, tag)));
   }
 
   write(request: WriteRequest, signal: AbortSignal, options?: ScanOptions): Promise<TagInfo> {
-    return this.queue.run(() => this.scan(signal, options, (tag, link) => writeTag(link, tag, request)));
+    return this.queue.run(signal, () => this.scan(signal, options, (tag, link) => writeTag(link, tag, request)));
   }
 
   async openSettings(): Promise<void> {
@@ -63,20 +68,36 @@ export class AndroidNfcBackend implements NfcBackend {
   ): Promise<T> {
     await requireNfc(this.system);
     signal.throwIfAborted();
-    this.listening ??= this.reader.addListener('tag', (event) => this.onTag?.(event));
+    this.listening ??= Promise.all([
+      this.reader.addListener('tag', (event) => this.handlers?.tag(event)),
+      this.reader.addListener('disabled', (event) => this.handlers?.disabled(event)),
+    ]);
     await this.listening;
 
     const session = ++this.session;
+    const reuseTagId = options?.reuse ? this.failedTagId : -1;
+    this.failedTagId = -1;
     const scan = pendingScan<T>(signal);
-    this.onTag = (event) => {
-      if (event.session !== session) return;
-      scan.take(() => work(tagInfoFrom(event.tag), androidLink(this.reader, event.tag.tagId)));
+    let tagId = -1;
+    this.handlers = {
+      tag: (event) => {
+        if (event.session !== session || tagId >= 0) return;
+        tagId = event.tag.tagId;
+        scan.take(() => work(tagInfoFrom(event.tag), androidLink(this.reader, event.tag.tagId)));
+      },
+      disabled: (event) => {
+        if (event.session === session) scan.fail(new NfcError('disabled', 'NFC is turned off.'));
+      },
     };
-    this.reader.start({ session, reusePresent: options?.reuse ?? false }).catch((error) => scan.fail(startError(error)));
+    this.reader.start({ session, reuseTagId }).catch((error) => scan.fail(startError(error)));
     try {
       return await scan.result;
+    } catch (error) {
+      // Only a tag that was actually being handled is worth reusing.
+      if (tagId >= 0 && !(error instanceof NfcError && error.code === 'cancelled')) this.failedTagId = tagId;
+      throw error;
     } finally {
-      this.onTag = null;
+      this.handlers = null;
       await this.reader.stop().catch(() => undefined);
     }
   }

@@ -16,6 +16,7 @@ export type NfcErrorCode =
   | 'not-ndef'
   | 'tag-lost'
   | 'write-failed'
+  | 'same-tag'
   | 'unknown';
 
 export interface TagRecord {
@@ -28,6 +29,8 @@ export interface TagInfo {
   uid: string;
   /** Human readable chip family, e.g. "NFC Forum Type 2" or "MIFARE Ultralight". */
   kind: string | null;
+  /** The chip family as the platform named it (iOS: "MIFARE DESFire", "MIFARE Ultralight"…). */
+  platformType?: string | null;
   /** Usable NDEF bytes, when the platform reports it. */
   capacity: number | null;
   writable: boolean | null;
@@ -46,17 +49,28 @@ export interface WriteRequest {
   bytesNeeded: number;
   /** Write even to tags the U1 is known not to read (e.g. NTAG213). */
   allowIncompatible: boolean;
+  /** UIDs already written in this flow; finding one again means the user hasn't moved on to the next tag. */
+  skipUids?: readonly string[];
+}
+
+export interface NfcErrorOptions extends ErrorOptions {
+  /** "Write anyway" (allowIncompatible) would let this tag through. */
+  overridable?: boolean;
 }
 
 export class NfcError extends Error {
+  /** True only when WriteRequest.allowIncompatible would let this tag through. */
+  readonly overridable: boolean;
+
   constructor(
     readonly code: NfcErrorCode,
     message: string,
     readonly tag?: TagInfo,
-    options?: ErrorOptions,
+    options?: NfcErrorOptions,
   ) {
     super(message, options);
     this.name = 'NfcError';
+    this.overridable = options?.overridable ?? false;
   }
 }
 
@@ -84,6 +98,9 @@ const MIN_U1_CAPACITY = 400;
 
 /** Returns the reason this tag cannot (or should not) take the write, or null when it is fine. */
 export function checkTagForWrite(tag: TagInfo, request: WriteRequest): NfcError | null {
+  if (tag.uid && request.skipUids?.includes(tag.uid)) {
+    return new NfcError('same-tag', 'That’s the tag you just wrote. Move it away from the phone and hold the next tag.', tag);
+  }
   const tech = tag.techTypes.join(' ');
   if (/NfcV|ISO15693/i.test(tech)) {
     return new NfcError(
@@ -96,6 +113,14 @@ export function checkTagForWrite(tag: TagInfo, request: WriteRequest): NfcError 
     return new NfcError(
       'incompatible',
       'This is a MIFARE Classic tag. The U1 only reads Snapmaker’s own encrypted Classic tags.',
+      tag,
+    );
+  }
+  // iOS reports DESFire and MIFARE Plus as plain MIFARE tags; only the family name tells them apart.
+  if (/DESFire|MIFARE Plus/i.test(tag.platformType ?? '')) {
+    return new NfcError(
+      'incompatible',
+      'This is a MIFARE DESFire or Plus tag (NFC Type 4). The U1 reads NTAG215 and NTAG216 stickers.',
       tag,
     );
   }
@@ -132,13 +157,19 @@ export function checkTagForWrite(tag: TagInfo, request: WriteRequest): NfcError 
     );
   }
   if (!request.allowIncompatible && request.bytesNeeded > U1_USER_BYTES) {
-    return new NfcError('incompatible', `The spool data needs ${request.bytesNeeded} bytes, more than the ${U1_USER_BYTES} the U1 reads.`, tag);
+    return new NfcError(
+      'incompatible',
+      `The spool data needs ${request.bytesNeeded} bytes, more than the ${U1_USER_BYTES} the U1 reads.`,
+      tag,
+      { overridable: true },
+    );
   }
   if (!request.allowIncompatible && tag.capacity !== null && tag.capacity > 0 && tag.capacity < MIN_U1_CAPACITY) {
     return new NfcError(
       'incompatible',
       `This tag only holds ${tag.capacity} bytes, so it is probably an NTAG213. The U1 reads NTAG215 and NTAG216 tags.`,
       tag,
+      { overridable: true },
     );
   }
   return null;

@@ -1,13 +1,28 @@
 import { NfcError } from './nfc-types';
 
+/** Longest a tag's work may take before the scan gives up on it; a write takes about a second. */
+const WORK_TIMEOUT_MS = 20_000;
+
 /** Runs scans one at a time: each starts only after the previous one, including tag work, is over. */
 export class ScanQueue {
   private previous: Promise<unknown> = Promise.resolve();
 
-  run<T>(scan: () => Promise<T>): Promise<T> {
-    const next = this.previous.then(scan);
-    this.previous = next.catch(() => undefined);
-    return next;
+  /** A scan cancelled while still waiting its turn ends at once and never starts. */
+  run<T>(signal: AbortSignal, scan: () => Promise<T>): Promise<T> {
+    let started = false;
+    const turn = this.previous.then(() => {
+      started = true;
+      signal.throwIfAborted();
+      return scan();
+    });
+    this.previous = turn.catch(() => undefined);
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => {
+        if (!started) reject(new NfcError('cancelled', 'Scan cancelled.'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      turn.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+    });
   }
 }
 
@@ -52,10 +67,21 @@ export function pendingScan<T>(signal: AbortSignal): PendingScan<T> {
     take(work) {
       if (busy || settled) return;
       busy = true;
-      work().then(
-        (value) => settle(() => resolve(value)),
-        (error) => settle(() => reject(error instanceof NfcError ? error : new NfcError('unknown', String(error), undefined, { cause: error }))),
-      );
+      // Run in a microtask so a synchronous throw becomes a rejection, and bound it, so a native call
+      // that never settles can't hold up every later scan.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timedOut = new Promise<never>((_, rej) => {
+        timer = setTimeout(
+          () => rej(new NfcError('unknown', 'The phone stopped responding while handling the tag. Try again.')),
+          WORK_TIMEOUT_MS,
+        );
+      });
+      Promise.race([Promise.resolve().then(work), timedOut])
+        .finally(() => clearTimeout(timer))
+        .then(
+          (value) => settle(() => resolve(value)),
+          (error) => settle(() => reject(error instanceof NfcError ? error : new NfcError('unknown', String(error), undefined, { cause: error }))),
+        );
     },
     fail(error) {
       if (!busy) settle(() => reject(error));

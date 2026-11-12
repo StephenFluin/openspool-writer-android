@@ -108,11 +108,12 @@ export class SpoolmanService {
     const fields = await this.ensureFields();
     if (takeTagFrom && takeTagFrom.id !== spool.id) await this.unlinkTag(takeTagFrom, uid);
 
-    let updated = spool;
-    const uids = decodeCardUids(spool.extra['card_uids']);
+    // card_uids is replaced as a whole, so build it from Spoolman's current copy, not one loaded earlier.
+    let updated = await this.request<SpoolmanSpool>('GET', `/spool/${spool.id}`);
+    const uids = decodeCardUids(updated.extra?.['card_uids']);
     if (fields.cardUids && !uids.includes(uid)) {
       updated = await this.request<SpoolmanSpool>('PATCH', `/spool/${spool.id}`, {
-        extra: { ...spool.extra, card_uids: encodeCardUids([...uids, uid]) },
+        extra: { ...updated.extra, card_uids: encodeCardUids([...uids, uid]) },
       });
     }
     updated = await this.linkNativeTag(updated, uid);
@@ -130,8 +131,9 @@ export class SpoolmanService {
     return `${this.baseUrl()}/spool/show/${spoolId}`;
   }
 
-  private async unlinkTag(spool: SpoolmanSpool, uid: string): Promise<void> {
-    const uids = decodeCardUids(spool.extra['card_uids']);
+  private async unlinkTag(stale: SpoolmanSpool, uid: string): Promise<void> {
+    const spool = await this.request<SpoolmanSpool>('GET', `/spool/${stale.id}`);
+    const uids = decodeCardUids(spool.extra?.['card_uids']);
     if (uids.includes(uid)) {
       await this.request('PATCH', `/spool/${spool.id}`, {
         extra: { ...spool.extra, card_uids: encodeCardUids(uids.filter((u) => u !== uid)) },

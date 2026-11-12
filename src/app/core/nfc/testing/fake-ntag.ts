@@ -18,6 +18,10 @@ export interface FakeNtagOptions {
   mirror?: boolean;
   /** Clones that don't answer GET_VERSION. */
   answersVersion?: boolean;
+  /** Clones that ignore GET_VERSION entirely; Android reports the silence as a lost tag. */
+  silentVersion?: boolean;
+  /** Pages whose WRITE is refused with a NAK handed back as data, as some Android controllers do. */
+  nakAsData?: number[];
   /** The tag leaves the field after this many commands. */
   leavesAfter?: number;
   /** Writes to these pages are acknowledged but don't stick. */
@@ -70,6 +74,7 @@ export class FakeNtag implements TagLink {
     const [command, page] = frame;
     switch (command) {
       case 0x60:
+        if (this.options.silentVersion) throw new LinkError('lost', 'Tag was lost.');
         return this.options.answersVersion === false ? this.refuse() : [...NTAG215_VERSION];
       case 0x30: {
         if (page > LAST_PAGE) return this.refuse();
@@ -83,6 +88,7 @@ export class FakeNtag implements TagLink {
       }
       case 0xa2: {
         if (page < 3 || page > LAST_PAGE || page >= this.auth0) return this.refuse();
+        if (this.options.nakAsData?.includes(page)) return [0x00];
         const data = frame.slice(2, 6);
         if (page === 3) this.pages[3] = this.pages[3].map((b, i) => b | data[i]); // one-time programmable
         else if (!this.options.flakyPages?.includes(page)) this.pages[page] = data;

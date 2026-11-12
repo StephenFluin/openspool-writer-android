@@ -68,6 +68,25 @@ export interface ChipReadings {
   config: number[] | null;
   /** True when the chip refused to read its configuration pages, which only a read password does. */
   configUnreadable?: boolean;
+  /** True when the configuration read failed in a way that can't be told apart from the tag leaving (iOS). */
+  configUnconfirmed?: boolean;
+}
+
+/**
+ * True when pages 2–3 alone show nothing in the way of an NDEF write: a capability container the
+ * U1 accepts, write access, and no static lock bits on pages 4–15.
+ */
+export function headerReadyForNdef(header: number[]): boolean {
+  if (header.length < 16) return false;
+  const [magic, version, size, access] = header.slice(12, 16);
+  return (
+    magic === 0xe1 &&
+    version >> 4 === 1 &&
+    U1_CC_SIZES.includes(size) &&
+    (access & 0x0f) === 0 &&
+    (header[10] & 0xf0) === 0 &&
+    header[11] === 0
+  );
 }
 
 /** Names the chip from its GET_VERSION answer (vendor, product type and storage size bytes). */
@@ -141,6 +160,9 @@ export function analyzeChip(readings: ChipReadings): ChipReport {
     findings.push('This isn’t an NTAG213/215/216. The U1 expects an NTAG215 or NTAG216.');
   } else if (!readings.version) {
     findings.push('The chip didn’t say what it is. It may be a clone that doesn’t fully behave like an NTAG215.');
+  }
+  if (readings.configUnconfirmed) {
+    findings.push('The tag left before its settings could be checked, so a password can’t be ruled out. Scan it again.');
   }
   if (passwordProtected) {
     findings.push(

@@ -19,7 +19,7 @@ const FINDING_THE_ANTENNA_IOS = 'On iPhone the NFC antenna is along the top edge
 const HOLD_STILL = 'Hold the tag flat against the phone and keep it still for a couple of seconds.';
 const USE_NTAG215 = 'Use NTAG215 or NTAG216 stickers (13.56 MHz, “NFC Forum Type 2”). They’re cheap and the U1 reads them reliably.';
 
-const TAG_PROBLEMS = new Set<NfcError['code']>(['read-only', 'password', 'too-small', 'incompatible', 'not-ndef']);
+const TAG_PROBLEMS = new Set<NfcError['code']>(['read-only', 'password', 'too-small', 'incompatible', 'not-ndef', 'same-tag']);
 
 export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boolean): ProblemHelp {
   const antenna = isIos ? FINDING_THE_ANTENNA_IOS : FINDING_THE_ANTENNA_ANDROID;
@@ -82,10 +82,13 @@ export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boo
         USE_NTAG215,
         'NTAG213 tags (often sold as “144 byte” tags) don’t have room, and the U1 can’t read them anyway.',
       ]);
-    case 'incompatible': {
-      const sizeOnly = error.tag?.capacity != null && !/ISO 15693|MIFARE Classic/.test(error.message);
-      return help('The U1 can’t read this kind of tag', [error.message, USE_NTAG215], { offerOverride: sizeOnly });
-    }
+    case 'incompatible':
+      return help('The U1 can’t read this kind of tag', [error.message, USE_NTAG215], { offerOverride: error.overridable });
+    case 'same-tag':
+      return help('That tag is already written', [
+        error.message,
+        isIos ? 'Lift the top of the iPhone away from that tag before holding the next one.' : 'Lift the phone off that tag, then hold the new tag to it.',
+      ]);
     case 'not-ndef':
       return help('This tag can’t hold spool data', [
         error.message,
@@ -95,7 +98,7 @@ export function helpFor(error: NfcError, backend: NfcBackend['kind'], isIos: boo
       ]);
     case 'tag-lost':
       return help('The tag moved away', [
-        'The write started but the tag left the phone’s range.',
+        'The tag left the phone’s range before the phone finished with it.',
         HOLD_STILL + ' Wait for the confirmation before moving it.',
         'If you’re tagging a spool that’s already wound, press the phone firmly against the tag.',
       ]);

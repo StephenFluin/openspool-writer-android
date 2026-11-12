@@ -9,6 +9,7 @@ import {
   CMD_READ,
   CMD_WRITE,
   encodeNdefMessage,
+  headerReadyForNdef,
   identifyChip,
   PageWrite,
   type2PageWrites,
@@ -76,41 +77,57 @@ export async function writeTag(link: TagLink, tag: TagInfo, request: WriteReques
 /**
  * Asks a Type 2 tag what it is: its header (UID, locks, NDEF header), its GET_VERSION answer and its
  * configuration pages. Returns null for tags that don't speak these commands. A "light" inspection
- * stops after the header when the tag already holds a valid NDEF header, so on iOS no command the
- * tag might refuse runs before the NDEF write.
+ * stops after the header when it shows a ready, unlocked NDEF header, so on iOS no command the tag
+ * might refuse runs before the NDEF write.
  */
 export async function inspectChip(link: TagLink, tag: TagInfo, depth: 'full' | 'light'): Promise<ChipReport | null> {
   if (/NfcV|ISO15693|MifareClassic|IsoDep|ISO7816|NfcB|NfcF|FeliCa/i.test(tag.techTypes.join(' '))) return null;
-  let header: number[];
+  let header: number[] | null = null;
   try {
     header = await read(link, 0);
   } catch (error) {
     if (isLost(error)) throw new NfcError('tag-lost', LOST, tag, { cause: error });
-    return null;
+    // On iOS the tag now answers nothing more. On Android it's re-selected, and an NTAG that refuses
+    // page 0 has a read password over all its memory, which GET_VERSION (never protected) reveals.
+    if (!link.recoversFromRefusal) return null;
   }
-  if (depth === 'light' && header[12] === 0xe1) return null;
+  if (depth === 'light' && header && headerReadyForNdef(header)) return null;
 
   let version: number[];
   try {
     version = await exactly(link, [CMD_GET_VERSION], 8);
   } catch (error) {
-    if (isLost(error)) throw new NfcError('tag-lost', LOST, tag, { cause: error });
+    if (!header) return null;
+    // Android reports a command the chip ignores as a lost tag; a tag that still answers didn't leave.
+    if (isLost(error) && !(link.recoversFromRefusal && (await answers(link, true)))) {
+      throw new NfcError('tag-lost', LOST, tag, { cause: error });
+    }
     // Older chips and some clones don't answer GET_VERSION.
     return analyzeChip({ version: null, header, config: null });
   }
   const model = identifyChip(version);
   let config: number[] | null = null;
   let configUnreadable = false;
+  let configUnconfirmed = false;
   if (model) {
     try {
       config = await read(link, model.dynamicLockPage);
     } catch (error) {
-      if (isLost(error)) throw new NfcError('tag-lost', LOST, tag, { cause: error });
-      // A genuine NTAG only refuses to read its configuration when a read password covers it.
-      configUnreadable = true;
+      if (link.recoversFromRefusal) {
+        // A genuine NTAG only refuses its configuration under a read password, but Android can report
+        // a tag that left the same way, so check it's still there.
+        if (!(await answers(link, header !== null))) throw new NfcError('tag-lost', LOST, tag, { cause: error });
+        configUnreadable = true;
+      } else if (isLost(error)) {
+        throw new NfcError('tag-lost', LOST, tag, { cause: error });
+      } else {
+        // iOS reports a refusal and a lifted tag alike, and a halted tag can't be asked again.
+        configUnconfirmed = true;
+      }
     }
   }
-  return analyzeChip({ version, header, config, configUnreadable });
+  if (!header && !configUnreadable) return null;
+  return analyzeChip({ version, header, config, configUnreadable, configUnconfirmed });
 }
 
 /** Writes the record page by page, then reads it back to make sure it landed. */
@@ -121,16 +138,45 @@ async function writePages(link: TagLink, tag: TagInfo, request: WriteRequest, fo
   let answered = 0;
   try {
     for (const { page, data } of plan.sequence) {
-      await link.command([CMD_WRITE, page, ...data]);
+      const ack = await link.command([CMD_WRITE, page, ...data]);
+      // Some controllers hand back the 4-bit NAK as data instead of failing the command.
+      if (ack.length > 0 && (ack[0] & 0x0f) !== 0x0a) throw new RefusedWriteError(page, ack[0]);
       answered++;
     }
     await verify(link, plan.expected, () => answered++);
   } catch (error) {
-    if (error instanceof ReadBackError) throw new NfcError('write-failed', WRITE_FAILED, tag, { cause: error });
-    // The inspection just showed the tag answers and nothing protects it, so a failure partway through
-    // means it left the field.
-    if (isLost(error) || answered > 0) throw new NfcError('tag-lost', LOST, tag, { cause: error });
-    throw new NfcError('write-failed', WRITE_FAILED, tag, { cause: error });
+    if (error instanceof ReadBackError || error instanceof RefusedWriteError) {
+      throw new NfcError('write-failed', WRITE_FAILED, tag, { cause: error });
+    }
+    if (isLost(error)) throw new NfcError('tag-lost', LOST, tag, { cause: error });
+    if (link.recoversFromRefusal) {
+      // Android can ask again: a tag that still answers refused the write rather than leaving.
+      const present = await answers(link, true);
+      throw new NfcError(present ? 'write-failed' : 'tag-lost', present ? WRITE_FAILED : LOST, tag, { cause: error });
+    }
+    // iOS can't ask again. The inspection just showed the tag answers and nothing protects it, so a
+    // failure partway through means it left.
+    throw new NfcError(answered > 0 ? 'tag-lost' : 'write-failed', answered > 0 ? LOST : WRITE_FAILED, tag, { cause: error });
+  }
+}
+
+class RefusedWriteError extends Error {
+  constructor(page: number, nak: number) {
+    super(`The tag refused the write to page ${page} (NAK ${nak.toString(16)}).`);
+  }
+}
+
+/**
+ * Whether the tag still answers, for telling a refusal from a tag that left (Android only, where a
+ * refusal doesn't halt the tag). Uses page 0 when it's readable, otherwise GET_VERSION.
+ */
+async function answers(link: TagLink, pageZeroReadable: boolean): Promise<boolean> {
+  try {
+    if (pageZeroReadable) await read(link, 0);
+    else await exactly(link, [CMD_GET_VERSION], 8);
+    return true;
+  } catch {
+    return false;
   }
 }
 

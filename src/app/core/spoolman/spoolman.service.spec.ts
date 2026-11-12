@@ -164,9 +164,11 @@ describe('SpoolmanService', () => {
 
     await answer('GET', '/field/spool', [{ key: 'card_uids' }]);
     await answer('GET', '/field/filament', [{ key: 'variant' }]);
+    await answer('GET', '/spool/4', oldSpool);
     const unlink = await answer('PATCH', '/spool/4', oldSpool);
     expect(unlink.request.body).toEqual({ extra: { card_uids: '"AABB"', other: '"keep"' } });
     await answer('DELETE', `/spool/4/tag/${UID}`, null);
+    await answer('GET', '/spool/8', target);
     const link = await answer('PATCH', '/spool/8', { ...target, extra: { card_uids: `"${UID}"` } });
     expect(link.request.body).toEqual({ extra: { card_uids: `"${UID}"` } });
     await answer('POST', '/spool/8/tag', { uid: UID });
@@ -185,6 +187,18 @@ describe('SpoolmanService', () => {
     setting.flush({ detail: 'Not found' }, { status: 404, statusText: 'Not Found' });
     await answer('GET', '/location', ['Shelf A']);
     await vi.waitFor(() => expect(service.locations.value()).toEqual(['Shelf A']));
+  });
+
+  it('keeps tags linked since the spool was loaded', async () => {
+    const snapshot = spool(8, { card_uids: '""' }, []);
+    const result = service.linkTagToSpool(snapshot, UID);
+    await answer('GET', '/field/spool', [{ key: 'card_uids' }]);
+    await answer('GET', '/field/filament', [{ key: 'variant' }]);
+    await answer('GET', '/spool/8', spool(8, { card_uids: '"AABBCCDD"' }, [{ uid: 'AABBCCDD' }]));
+    const link = await answer('PATCH', '/spool/8', spool(8, { card_uids: `"AABBCCDD,${UID}"` }, [{ uid: 'AABBCCDD' }]));
+    expect(link.request.body).toEqual({ extra: { card_uids: `"AABBCCDD,${UID}"` } });
+    await answer('POST', '/spool/8/tag', { uid: UID });
+    await result;
   });
 
   it('turns network failures into a readable message', async () => {

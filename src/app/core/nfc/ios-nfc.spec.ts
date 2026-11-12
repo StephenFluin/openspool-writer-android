@@ -60,6 +60,17 @@ describe('IosNfcBackend', () => {
     await expect(backend.read(new AbortController().signal)).rejects.toMatchObject({ code: 'unsupported' });
   });
 
+  it('reports a session that ends while a tag is being handled as the tag moving, not a refusal', async () => {
+    nfc.transceive = async () => {
+      nfc.emit('nfcSessionEnd', { reason: 'invalidated' });
+      throw new Error('Transceive failed.');
+    };
+    const read = backend.read(new AbortController().signal);
+    await vi.waitFor(() => expect(nfc.startScanning).toHaveBeenCalledTimes(1));
+    nfc.emit('nfcEvent', { type: 'tag', tag: { id: [4, 1, 2, 3], techTypes: ['NFCMiFareTag'] } });
+    await expect(read).rejects.toMatchObject({ code: 'tag-lost' });
+  });
+
   it('tells a timeout apart from the iPhone ending the session', async () => {
     const timedOut = backend.read(new AbortController().signal);
     await vi.waitFor(() => expect(nfc.startScanning).toHaveBeenCalledTimes(1));

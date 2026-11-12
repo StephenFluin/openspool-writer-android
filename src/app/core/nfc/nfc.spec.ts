@@ -1,3 +1,4 @@
+import { parseOpenSpool } from '../openspool';
 import { mapNativeError } from './ios-nfc';
 import { helpFor } from './nfc-help';
 import { checkTagForWrite, NfcError, TagInfo, WriteRequest } from './nfc-types';
@@ -100,3 +101,31 @@ describe('error mapping', () => {
     expect(guessChip(null, 'NFC Forum Type 2')).toBe('NFC Forum Type 2');
   });
 });
+
+describe('checkTagForWrite (rules added with the chip inspection)', () => {
+  it('refuses a tag already written in this flow', () => {
+    expect(checkTagForWrite(tag({}), { ...request, skipUids: ['04A1B2C3D4E5F6'] })?.code).toBe('same-tag');
+  });
+
+  it('names DESFire tags, which iOS reports as plain MIFARE', () => {
+    const desfire = tag({ techTypes: ['NFCMiFareTag'], platformType: 'MIFARE DESFire', capacity: 496 });
+    expect(checkTagForWrite(desfire, request)?.code).toBe('incompatible');
+  });
+
+  it('names cards and phones', () => {
+    expect(checkTagForWrite(tag({ techTypes: ['android.nfc.tech.IsoDep', 'android.nfc.tech.NfcA'] }), request)?.message).toMatch(/bank card/);
+  });
+
+  it('only offers "Write anyway" for problems it can override', () => {
+    expect(checkTagForWrite(tag({ capacity: 300 }), request)?.overridable).toBe(true);
+    expect(checkTagForWrite(tag({ techTypes: ['android.nfc.tech.MifareClassic'] }), request)?.overridable).toBe(false);
+  });
+});
+
+describe('parseOpenSpool', () => {
+  it('ignores values that are not plain text or numbers', () => {
+    const data = new TextEncoder().encode('{"protocol":"openspool","type":"PLA","brand":{"toString":1},"min_temp":[210]}');
+    expect(parseOpenSpool(data)).toMatchObject({ material: 'PLA', brand: '', nozzleMin: 0 });
+  });
+});
+

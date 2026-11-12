@@ -77,7 +77,10 @@ export class NfcService {
     try {
       return await operation(combined.signal);
     } catch (error) {
-      if (timedOut && !signal.aborted) {
+      // A tag being handled when the time ran out finishes first; keep its real outcome.
+      const endedByAbort =
+        (error instanceof NfcError && error.code === 'cancelled') || (error instanceof DOMException && error.name === 'AbortError');
+      if (timedOut && !signal.aborted && endedByAbort) {
         throw new NfcError('timeout', `No tag was found within ${SCAN_TIMEOUT_MS / 1000} seconds.`);
       }
       if (error instanceof NfcError && (error.code === 'disabled' || error.code === 'unsupported')) {

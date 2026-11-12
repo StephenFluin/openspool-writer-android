@@ -1,41 +1,51 @@
 import { PluginListenerHandle } from '@capacitor/core';
 import { AndroidNfcBackend, TagReaderPlugin } from './android-nfc';
 import { SystemNfc } from './native-common';
+import { WriteRequest } from './nfc-types';
 
-type TagListener = Parameters<TagReaderPlugin['addListener']>[1];
+type Listener = (event: never) => void;
 
 class FakeReader implements TagReaderPlugin {
   readonly calls: string[] = [];
-  listeners = 0;
+  readonly tagIds: number[] = [];
+  readonly listeners = new Map<string, Listener[]>();
   session = 0;
   startError: unknown = null;
+  writeError: unknown = null;
   /** Raw commands hang until released, to stand in for a write in progress. */
   hold: Promise<void> | null = null;
-  private listener: TagListener | null = null;
 
-  async start(options: { session: number; reusePresent: boolean }): Promise<void> {
-    this.calls.push(`start reuse=${options.reusePresent}`);
+  async start(options: { session: number; reuseTagId: number }): Promise<void> {
+    this.calls.push(`start reuse=${options.reuseTagId}`);
     this.session = options.session;
     if (this.startError) throw this.startError;
   }
   async stop(): Promise<void> {
     this.calls.push('stop');
   }
-  async transceive(): Promise<{ response: number[] }> {
+  async transceive(options: { tagId: number }): Promise<{ response: number[] }> {
     this.calls.push('transceive');
+    this.tagIds.push(options.tagId);
     await this.hold;
     throw Object.assign(new Error('Transceive failed.'), { code: 'IO' });
   }
-  async writeNdef(): Promise<void> {
+  async writeNdef(options: { tagId: number }): Promise<void> {
     this.calls.push('writeNdef');
+    this.tagIds.push(options.tagId);
+    if (this.writeError) throw this.writeError;
   }
-  async addListener(_event: 'tag', listener: TagListener): Promise<PluginListenerHandle> {
-    this.listeners++;
-    this.listener = listener;
+  async addListener(event: string, listener: Listener): Promise<PluginListenerHandle> {
+    this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
     return { remove: async () => undefined };
   }
-  tap(session = this.session): void {
-    this.listener?.({ session, tag: { tagId: 7, id: [4, 1, 2, 3, 4, 5, 6], techTypes: ['android.nfc.tech.NfcA'] } });
+  private emit(event: string, payload: object): void {
+    for (const listener of this.listeners.get(event) ?? []) listener(payload as never);
+  }
+  tap(session = this.session, tagId = 7, id = [4, 1, 2, 3, 4, 5, 6]): void {
+    this.emit('tag', { session, tag: { tagId, id, techTypes: ['android.nfc.tech.NfcA'] } });
+  }
+  turnOff(): void {
+    this.emit('disabled', { session: this.session });
   }
 }
 
@@ -44,6 +54,7 @@ const system: SystemNfc = {
   getStatus: async () => ({ status: 'NFC_OK' }),
   showSettings: async () => undefined,
 };
+const request: WriteRequest = { mediaType: 'application/json', data: new Uint8Array([1]), bytesNeeded: 20, allowIncompatible: false };
 
 describe('AndroidNfcBackend', () => {
   let reader: FakeReader;
@@ -54,19 +65,20 @@ describe('AndroidNfcBackend', () => {
     backend = new AndroidNfcBackend(reader, system);
   });
 
-  it('only accepts tags reported for its own scan', async () => {
+  it('only handles tags reported for its own scan, and sends commands to that tag', async () => {
     const read = backend.read(new AbortController().signal);
-    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=false'));
-    reader.tap(reader.session - 1);
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=-1'));
+    reader.tap(reader.session - 1, 6, [4, 9, 9, 9, 9, 9, 9]);
     reader.tap();
     await expect(read).resolves.toMatchObject({ uid: '04010203040506' });
+    expect(new Set(reader.tagIds)).toEqual(new Set([7]));
     expect(reader.calls.at(-1)).toBe('stop');
   });
 
   it('stops the reader when a scan is cancelled while waiting', async () => {
     const abort = new AbortController();
     const read = backend.read(abort.signal);
-    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=false'));
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=-1'));
     abort.abort();
     await expect(read).rejects.toMatchObject({ code: 'cancelled' });
     expect(reader.calls.at(-1)).toBe('stop');
@@ -77,7 +89,7 @@ describe('AndroidNfcBackend', () => {
     reader.hold = new Promise((resolve) => (release = resolve));
     const abort = new AbortController();
     const first = backend.read(abort.signal);
-    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=false'));
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=-1'));
     reader.tap();
     await vi.waitFor(() => expect(reader.calls).toContain('transceive'));
 
@@ -89,22 +101,48 @@ describe('AndroidNfcBackend', () => {
     release();
     await expect(first).resolves.toMatchObject({ uid: '04010203040506' });
     await vi.waitFor(() => expect(reader.calls.filter((c) => c.startsWith('start'))).toHaveLength(2));
-    expect(reader.calls.indexOf('stop')).toBeLessThan(reader.calls.lastIndexOf('start reuse=false'));
+    expect(reader.calls.indexOf('stop')).toBeLessThan(reader.calls.lastIndexOf('start reuse=-1'));
     reader.tap();
     await second;
-    expect(reader.listeners).toBe(1);
+    expect(reader.listeners.get('tag')).toHaveLength(1);
   });
 
-  it('asks the reader to reuse a tag still on the phone when retrying', async () => {
-    const write = backend.write(
-      { mediaType: 'application/json', data: new Uint8Array([1]), bytesNeeded: 20, allowIncompatible: false },
-      new AbortController().signal,
-      { reuse: true },
-    );
-    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=true'));
+  it('ends a queued scan at once when it is cancelled before its turn', async () => {
+    const first = backend.read(new AbortController().signal);
+    const abort = new AbortController();
+    const queued = backend.read(abort.signal);
+    abort.abort();
+    await expect(queued).rejects.toMatchObject({ code: 'cancelled' });
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=-1'));
     reader.tap();
-    await write;
-    expect(reader.calls).toContain('writeNdef');
+    await first;
+    expect(reader.calls.filter((c) => c.startsWith('start'))).toHaveLength(1);
+  });
+
+  it('on retry, reuses only the tag the last scan failed on', async () => {
+    reader.writeError = Object.assign(new Error('Write failed.'), { code: 'IO' });
+    const failed = backend.write(request, new AbortController().signal);
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=-1'));
+    reader.tap();
+    await expect(failed).rejects.toMatchObject({ code: 'write-failed' });
+
+    reader.writeError = null;
+    const retried = backend.write(request, new AbortController().signal, { reuse: true });
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=7'));
+    reader.tap();
+    await retried;
+
+    const next = backend.write(request, new AbortController().signal, { reuse: true });
+    await vi.waitFor(() => expect(reader.calls.filter((c) => c === 'start reuse=-1')).toHaveLength(2));
+    reader.tap();
+    await next;
+  });
+
+  it('ends the scan when NFC is turned off', async () => {
+    const read = backend.read(new AbortController().signal);
+    await vi.waitFor(() => expect(reader.calls).toContain('start reuse=-1'));
+    reader.turnOff();
+    await expect(read).rejects.toMatchObject({ code: 'disabled' });
   });
 
   it('reports NFC turned off when the reader refuses to start', async () => {

@@ -77,6 +77,40 @@ describe('writeTag', () => {
     await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'write-failed' });
   });
 
+  it('treats a chip that ignores GET_VERSION as a clone, not a lost tag, when it still answers (Android)', async () => {
+    const tag = new FakeNtag({ silentVersion: true });
+    const result = await writeTag(tag, tag.info(), request);
+    expect(result.chip).toMatchObject({ knownNtag: false });
+    expect(tag.ndefWrites).toHaveLength(1);
+  });
+
+  it('reports a tag that leaves during the configuration read as moved, not password protected (Android)', async () => {
+    const tag = new FakeNtag({ leavesAfter: 2 });
+    await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'tag-lost' });
+  });
+
+  it('identifies a tag whose whole memory is read protected (Android)', async () => {
+    const tag = new FakeNtag({ auth0: 0x00, readProtected: true });
+    await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'password' });
+  });
+
+  it('stops at a write refused with a NAK handed back as data', async () => {
+    const tag = new FakeNtag({ formatted: false, nakAsData: [6] });
+    await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'write-failed' });
+    expect(tag.pages[3]).toEqual([0, 0, 0, 0]);
+  });
+
+  it('on iOS, inspects a tag whose header shows locks before writing, and refuses it', async () => {
+    const tag = new FakeNtag({ haltsOnRefusal: true, locks: [0x00, 0xff] });
+    await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'read-only' });
+    expect(tag.ndefWrites).toEqual([]);
+  });
+
+  it('refuses a tag this flow already wrote', async () => {
+    const tag = new FakeNtag();
+    await expect(writeTag(tag, tag.info(), { ...request, skipUids: ['048AA0F2D04F81'] })).rejects.toMatchObject({ code: 'same-tag' });
+  });
+
   it('still writes clones that will not say what they are, through the NDEF writer', async () => {
     const tag = new FakeNtag({ answersVersion: false });
     const result = await writeTag(tag, tag.info(), request);
@@ -90,6 +124,13 @@ describe('readTag', () => {
     const tag = new FakeNtag({ locks: [0x0f, 0xe0] });
     const result = await readTag(tag, tag.info());
     expect(result.chip).toMatchObject({ chip: 'NTAG215', locked: true, passwordProtected: false, mirrored: false });
+  });
+
+  it('on iOS, says a refused configuration read could not be checked rather than calling it a password', async () => {
+    const tag = new FakeNtag({ haltsOnRefusal: true, auth0: 0x10, readProtected: true });
+    const result = await readTag(tag, tag.info());
+    expect(result.chip?.passwordProtected).toBeNull();
+    expect(result.chip?.findings.join(' ')).toMatch(/can’t be ruled out/);
   });
 
   it('reports a tag that leaves during the read as moved', async () => {

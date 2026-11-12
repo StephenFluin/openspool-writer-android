@@ -84,9 +84,14 @@ export function parseOpenSpool(data: Uint8Array): Partial<FilamentSpec> | null {
   const raw = json as Record<string, unknown>;
   if (raw['protocol'] !== 'openspool') return null;
 
-  const text = (key: string) => (raw[key] === undefined || raw[key] === null ? '' : String(raw[key]));
+  // Only plain values: converting an object such as {"toString": 1} would throw.
+  const primitive = (key: string) => {
+    const value = raw[key];
+    return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? value : null;
+  };
+  const text = (key: string) => String(primitive(key) ?? '');
   const num = (key: string) => {
-    const value = Number(raw[key]);
+    const value = Number(primitive(key) ?? NaN);
     return Number.isFinite(value) ? value : 0;
   };
   return {

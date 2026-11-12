@@ -29,11 +29,11 @@ export class IosNfcBackend implements NfcBackend {
 
   // A new iOS session finds a tag that's already on the phone, so there's nothing to reuse.
   read(signal: AbortSignal): Promise<TagInfo> {
-    return this.queue.run(() => this.scan(signal, (tag, link) => readTag(link, tag)));
+    return this.queue.run(signal, () => this.scan(signal, (tag, link) => readTag(link, tag)));
   }
 
   write(request: WriteRequest, signal: AbortSignal): Promise<TagInfo> {
-    return this.queue.run(() => this.scan(signal, (tag, link) => writeTag(link, tag, request)));
+    return this.queue.run(signal, () => this.scan(signal, (tag, link) => writeTag(link, tag, request)));
   }
 
   async openSettings(): Promise<void> {
@@ -52,10 +52,26 @@ export class IosNfcBackend implements NfcBackend {
     const scan = pendingScan<T>(signal);
     let started = false;
     let earlyEnd: NfcSessionEndEvent['reason'] | null = null;
+    let ended: NfcSessionEndEvent['reason'] | null = null;
     this.handlers = {
-      tag: (event) => scan.take(() => work(tagInfoFrom(event.tag), iosLink(this.nfc))),
-      // Before the sheet is up, startScanning rejects with the real cause; that takes precedence.
-      end: (event) => (started ? scan.fail(sessionEndError(event.reason)) : (earlyEnd = event.reason)),
+      tag: (event) =>
+        scan.take(async () => {
+          const link = iosLink(this.nfc, () => ended !== null);
+          try {
+            const result = await work(tagInfoFrom(event.tag), link);
+            // A result pieced together from commands that failed because the session ended isn't trustworthy.
+            if (ended && link.failures > 0) throw endedDuringWork(ended);
+            return result;
+          } catch (error) {
+            throw ended ? endedDuringWork(ended, error) : error;
+          }
+        }),
+      end: (event) => {
+        ended = event.reason;
+        // Before the sheet is up, startScanning rejects with the real cause; that takes precedence.
+        if (started) scan.fail(sessionEndError(event.reason));
+        else earlyEnd = event.reason;
+      },
     };
     this.nfc
       .startScanning({
@@ -78,22 +94,29 @@ export class IosNfcBackend implements NfcBackend {
   }
 }
 
-function iosLink(nfc: IosNfc): TagLink {
+function iosLink(nfc: IosNfc, sessionEnded: () => boolean): TagLink & { readonly failures: number } {
   let answered = false;
+  let failures = 0;
   return {
     recoversFromRefusal: false,
+    get failures() {
+      return failures;
+    },
     async command(data) {
       try {
         const { response } = await nfc.transceive({ data, tech: 'nfcA', timeout: COMMAND_TIMEOUT_MS });
         answered = true;
         return response;
       } catch (error) {
+        failures++;
         const message = errorMessage(error);
-        const reason = /transceive failed/i.test(message)
-          ? 'refused'
-          : /connect|no longer available|no nfc tag|no active nfc session|lost/i.test(message)
-            ? 'lost'
-            : 'failed';
+        const reason = sessionEnded()
+          ? 'lost'
+          : /transceive failed/i.test(message)
+            ? 'refused'
+            : /connect|no longer available|no nfc tag|no active nfc session|lost/i.test(message)
+              ? 'lost'
+              : 'failed';
         throw new LinkError(reason, message, { cause: error });
       }
     },
@@ -122,6 +145,17 @@ function iosLink(nfc: IosNfc): TagLink {
       }
     },
   };
+}
+
+/** The session ended while a tag was being handled. */
+function endedDuringWork(reason: NfcSessionEndEvent['reason'], cause?: unknown): NfcError {
+  if (reason === 'userCancelled') return new NfcError('cancelled', 'Scan cancelled.', undefined, { cause });
+  return new NfcError(
+    'tag-lost',
+    'The iPhone ended the NFC session before it finished with the tag. Try again and hold it still.',
+    undefined,
+    { cause },
+  );
 }
 
 function sessionEndError(reason: NfcSessionEndEvent['reason']): NfcError {

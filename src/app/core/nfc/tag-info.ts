@@ -51,9 +51,13 @@ export function tagInfoFrom(raw: RawTag): TagInfo {
     data: Uint8Array.from(record.payload),
   }));
   const capacity = raw.maxSize ?? null;
+  const platformType = raw.type ?? null;
+  // Capacity can't distinguish these from NTAGs, so keep the platform's name for them.
+  const notType2 = /DESFire|MIFARE Plus|ISO 7816|ISO 15693|FeliCa|Type [134]\b|MIFARE Classic/i.test(platformType ?? '');
   return {
     uid: uidToHex(raw.id ?? []),
-    kind: guessChip(capacity, raw.type ?? null),
+    kind: notType2 ? platformType : guessChip(capacity, platformType),
+    platformType,
     capacity,
     writable: raw.isWritable ?? null,
     techTypes: raw.techTypes ?? [],

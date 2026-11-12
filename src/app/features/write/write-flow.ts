@@ -39,10 +39,16 @@ export class WriteFlow {
   private abort: AbortController | null = null;
   /** Bumped by every scan, sync and cancel, so work that finishes late can tell it's been superseded. */
   private run = 0;
+  /** Tags written for the current spool, so "Write another" doesn't rewrite one still on the phone. */
+  private readonly writtenUids = new Set<string>();
 
   constructor() {
-    // Leaving the page mid-scan ends the scan rather than leaving it waiting for a tag.
-    inject(DestroyRef).onDestroy(() => this.cancel());
+    // Leaving the page ends whatever is running; nothing is left to show its outcome.
+    inject(DestroyRef).onDestroy(() => {
+      this.run++;
+      this.abort?.abort();
+      this.abort = null;
+    });
   }
 
   start(spec: FilamentSpec, target: SpoolTarget): void {
@@ -50,6 +56,7 @@ export class WriteFlow {
     this.target = target;
     this.allowIncompatible = false;
     this.writtenCount.set(0);
+    this.writtenUids.clear();
     void this.scan(false);
   }
 
@@ -71,9 +78,13 @@ export class WriteFlow {
   }
 
   cancel(): void {
-    this.run++;
+    const scanning = this.state().step === 'scanning';
     this.abort?.abort();
     this.abort = null;
+    // A scan still waiting for a tag ends at once and goes idle. One already writing a tag can't be
+    // stopped, so it finishes and shows what really happened to the tag.
+    if (scanning) return;
+    this.run++;
     this.state.set({ step: 'idle' });
   }
 
@@ -109,19 +120,22 @@ export class WriteFlow {
           data,
           bytesNeeded: tagBytesNeeded(data.length),
           allowIncompatible: this.allowIncompatible,
+          skipUids: [...this.writtenUids],
         },
         abort.signal,
         { reuse },
       );
       if (run !== this.run) return;
       void this.nfc.haptic('success');
+      if (tag.uid) this.writtenUids.add(tag.uid);
       this.writtenCount.update((n) => n + 1);
       this.settings.rememberBrand(spec.brand);
       await this.sync(tag, run);
     } catch (caught) {
       if (run !== this.run) return;
       const error = caught instanceof NfcError ? caught : new NfcError('unknown', String(caught));
-      if (error.code === 'cancelled') {
+      // After Cancel, only a failure that reached a tag is worth showing.
+      if (error.code === 'cancelled' || (abort.signal.aborted && !error.tag)) {
         this.state.set({ step: 'idle' });
         return;
       }
@@ -146,6 +160,7 @@ export class WriteFlow {
     }
 
     this.state.set({ step: 'syncing', tag });
+    let created: SpoolmanSpool | null = null;
     try {
       let linkTo = target.kind === 'existing' ? target.spool : null;
       if (!takeTagFrom) {
@@ -166,6 +181,7 @@ export class WriteFlow {
               takeTagFrom,
               // From here on, a retry or another tag links to this spool instead of creating a second one.
               onCreated: (spool) => {
+                created = spool;
                 if (!stale()) this.target = { kind: 'existing', spool };
               },
             })
@@ -178,6 +194,14 @@ export class WriteFlow {
     } catch (error) {
       if (stale()) return;
       const message = error instanceof Error ? error.message : String(error);
+      const spool = created as SpoolmanSpool | null; // assigned in a callback, which TS doesn't track
+      if (spool) {
+        // The spool exists and carries the tag in Card UIDs, which is what the U1 looks up.
+        this.spoolman.locations.reload();
+        const sync: SyncResult = { spool, createdSpool: true, createdFilament: false, createdVendor: false, movedFrom: takeTagFrom };
+        this.finish(tag, sync, `Added to Spoolman, but adding the tag to Spoolman’s own tag list failed: ${message}`);
+        return;
+      }
       this.state.set({ step: 'done', tag, sync: null, syncNote: message, syncFailed: true });
     }
   }
