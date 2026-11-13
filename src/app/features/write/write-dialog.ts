@@ -32,7 +32,7 @@ export class WriteDialog {
     const state = this.state();
     switch (state.step) {
       case 'scanning':
-        return 'Waiting for a tag.';
+        return state.stopping ? 'Finishing with the tag. Keep holding it.' : 'Waiting for a tag.';
       case 'error':
         return state.help.title;
       case 'syncing':

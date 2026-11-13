@@ -106,6 +106,17 @@ describe('writeTag', () => {
     expect(tag.ndefWrites).toEqual([]);
   });
 
+  it('ends with the NFC-off error when NFC is switched off mid-way', async () => {
+    const tag = new FakeNtag({ nfcOff: true });
+    await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'disabled' });
+  });
+
+  it('on iOS, does not try to write a tag that refused a command during the check', async () => {
+    const tag = new FakeNtag({ haltsOnRefusal: true, formatted: false, answersVersion: false });
+    await expect(writeTag(tag, tag.info(), request)).rejects.toMatchObject({ code: 'tag-lost', message: expect.stringMatching(/stopped answering/) });
+    expect(tag.ndefWrites).toEqual([]);
+  });
+
   it('refuses a tag this flow already wrote', async () => {
     const tag = new FakeNtag();
     await expect(writeTag(tag, tag.info(), { ...request, skipUids: ['048AA0F2D04F81'] })).rejects.toMatchObject({ code: 'same-tag' });

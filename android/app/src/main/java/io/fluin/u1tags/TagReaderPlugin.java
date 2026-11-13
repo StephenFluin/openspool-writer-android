@@ -28,6 +28,7 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -56,19 +57,23 @@ public class TagReaderPlugin extends Plugin {
     /** Tags kept for later commands; older ones are forgotten. */
     private static final int KEPT_TAGS = 8;
     private static final String CONNECT_BUSY = "Only one TagTechnology can be connected at a time.";
+    private static final byte CMD_WRITE = (byte) 0xa2;
+    private static final int ACK = 0x0a;
 
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final AtomicInteger nextTagId = new AtomicInteger();
     private final Map<Integer, Tag> tags = new ConcurrentHashMap<>();
     private final Map<Integer, JSObject> infos = new ConcurrentHashMap<>();
+    /** Tags this plugin has written to since they were discovered, whose cached contents are out of date. */
+    private final Set<Integer> written = ConcurrentHashMap.newKeySet();
 
-    /** Guards the hand-off between a scan starting and a tag arriving between scans. */
+    /** Guards the hand-off between a scan starting and a tag being discovered. */
     private final Object sessionLock = new Object();
     /** The scan in progress, or 0 between scans. Events are only sent during a scan. */
     private volatile int session = 0;
-    /** A tag that arrived between scans (during the grace period) and went to nobody. Guarded by sessionLock. */
-    private int unclaimedTagId = -1;
+    /** The most recently discovered tag. Guarded by sessionLock. */
+    private int latestTagId = -1;
 
     /** True during a scan and its grace period. Only written on the main thread. */
     private volatile boolean readerWanted = false;
@@ -126,14 +131,14 @@ public class TagReaderPlugin extends Plugin {
             return;
         }
         int id = call.getInt("session", 0);
-        int reuseTagId = call.getInt("reuseTagId", -1);
+        int skipTagId = call.getInt("skipTagId", -1);
         int candidate;
         synchronized (sessionLock) {
             session = id;
-            // A retry reuses the tag that just failed; any scan picks up a tag that arrived between
-            // scans, since reader mode won't report either again while it stays in the field.
-            candidate = reuseTagId >= 0 ? reuseTagId : unclaimedTagId;
-            unclaimedTagId = -1;
+            // Reader mode won't report a tag again while it stays in the field, so the newest tag is
+            // offered if it's still on the phone, the way a new iOS session finds it. skipTagId is a
+            // tag the caller doesn't want again (the one it just handled).
+            candidate = latestTagId != skipTagId ? latestTagId : -1;
         }
         main.post(() -> {
             main.removeCallbacks(graceOver);
@@ -142,7 +147,9 @@ public class TagReaderPlugin extends Plugin {
         });
         if (candidate >= 0) {
             runIo(() -> {
-                if (session == id && isPresent(candidate)) emit(id, candidate);
+                if (session != id || !isPresent(candidate)) return;
+                JSObject info = currentInfo(candidate);
+                if (info != null) emit(id, info);
             });
         }
         call.resolve();
@@ -176,13 +183,17 @@ public class TagReaderPlugin extends Plugin {
             try {
                 NfcA nfcA = nfcA(tagId);
                 if (timeout != null) nfcA.setTimeout(timeout);
+                if (frame[0] == CMD_WRITE) written.add(tagId);
+                byte[] response = nfcA.transceive(frame);
+                // A lone 4-bit NAK some stacks hand back as data: treat it like Android's own exception.
+                if (response.length == 1 && (response[0] & 0x0f) != ACK) throw new IOException("Transceive failed (NAK).");
                 JSObject result = new JSObject();
-                result.put("response", array(nfcA.transceive(frame)));
+                result.put("response", array(response));
                 call.resolve(result);
             } catch (Exception e) {
                 // Closing also resets a tag that refused the command, so the next command can reach it.
                 closeConnection();
-                reject(call, e);
+                reject(call, nfcOff() ? new NfcOffException(e) : e);
             }
         });
         if (!queued) call.reject("The NFC reader has shut down.", "FAILED");
@@ -217,6 +228,7 @@ public class TagReaderPlugin extends Plugin {
                         call.reject("Tag capacity is insufficient.", "TOO_SMALL");
                         return;
                     }
+                    written.add(tagId);
                     ndef.writeNdefMessage(message);
                 } else {
                     NdefFormatable formatable = format ? NdefFormatable.get(tag) : null;
@@ -226,13 +238,18 @@ public class TagReaderPlugin extends Plugin {
                     }
                     tech = formatable;
                     connectOrLost(formatable);
+                    written.add(tagId);
                     formatable.format(message);
                 }
                 call.resolve();
             } catch (Exception e) {
-                // An I/O failure partway through is usually the tag leaving; tell the two apart.
+                // An I/O failure partway through is usually the tag leaving (or NFC turned off); tell them apart.
                 closeQuietly(tech);
                 tech = null;
+                if (nfcOff()) {
+                    reject(call, e instanceof NfcOffException ? e : new NfcOffException(e));
+                    return;
+                }
                 boolean gone = e instanceof IOException && !(e instanceof TagLostException) && !isPresent(tagId);
                 reject(call, gone ? lost(e) : e);
             } finally {
@@ -285,22 +302,61 @@ public class TagReaderPlugin extends Plugin {
         infos.put(id, info);
         tags.keySet().removeIf((key) -> key <= id - KEPT_TAGS);
         infos.keySet().removeIf((key) -> key <= id - KEPT_TAGS);
+        written.removeIf((key) -> key <= id - KEPT_TAGS);
         int current;
         synchronized (sessionLock) {
+            latestTagId = id;
             current = session;
-            if (current == 0) unclaimedTagId = id;
         }
-        if (current != 0) emit(current, id);
+        if (current != 0) emit(current, info);
     }
 
-    private void emit(int session, int tagId) {
-        JSObject info = infos.get(tagId);
-        if (info == null) return;
+    private void emit(int session, JSObject info) {
         JSObject event = new JSObject();
         event.put("session", session);
         event.put("tag", info);
         // Not retained: an event nobody is listening for is dropped rather than replayed later.
         notifyListeners("tag", event, false);
+    }
+
+    /**
+     * The tag's description with its contents as they are now: re-read when this plugin has written to
+     * the tag since it was discovered. Null when they can't be read, so nothing out of date is reported.
+     * Only on the io thread.
+     */
+    private JSObject currentInfo(int tagId) {
+        JSObject cached = infos.get(tagId);
+        Tag tag = tags.get(tagId);
+        if (cached == null || tag == null) return null;
+        if (!written.contains(tagId)) return cached;
+        // Formatted after discovery (or not NDEF at all): Android's NDEF view of this Tag is out of date.
+        Ndef ndef = Ndef.get(tag);
+        if (ndef == null) return null;
+        try {
+            connectOrLost(ndef);
+            NdefMessage message = ndef.getNdefMessage();
+            JSObject info = new JSObject(cached.toString());
+            info.put("ndefMessage", records(message));
+            return info;
+        } catch (Exception e) {
+            return null;
+        } finally {
+            closeQuietly(ndef);
+        }
+    }
+
+    private static JSArray records(NdefMessage message) {
+        JSArray records = new JSArray();
+        if (message == null) return records;
+        for (NdefRecord record : message.getRecords()) {
+            JSObject entry = new JSObject();
+            entry.put("tnf", record.getTnf());
+            entry.put("type", array(record.getType()));
+            entry.put("id", array(record.getId()));
+            entry.put("payload", array(record.getPayload()));
+            records.put(entry);
+        }
+        return records;
     }
 
     /** Everything Android learned about the tag when it was discovered; no I/O. */
@@ -317,18 +373,7 @@ public class TagReaderPlugin extends Plugin {
             info.put("maxSize", ndef.getMaxSize());
             info.put("isWritable", ndef.isWritable());
             NdefMessage cached = ndef.getCachedNdefMessage();
-            if (cached != null) {
-                JSArray records = new JSArray();
-                for (NdefRecord record : cached.getRecords()) {
-                    JSObject entry = new JSObject();
-                    entry.put("tnf", record.getTnf());
-                    entry.put("type", array(record.getType()));
-                    entry.put("id", array(record.getId()));
-                    entry.put("payload", array(record.getPayload()));
-                    records.put(entry);
-                }
-                info.put("ndefMessage", records);
-            }
+            if (cached != null) info.put("ndefMessage", records(cached));
         }
         return info;
     }
@@ -384,8 +429,7 @@ public class TagReaderPlugin extends Plugin {
             tech.connect();
         } catch (IOException e) {
             if (CONNECT_BUSY.equals(e.getMessage())) throw e;
-            NfcAdapter adapter = adapter();
-            if (adapter != null && !adapter.isEnabled()) throw new NfcOffException(e);
+            if (nfcOff()) throw new NfcOffException(e);
             throw lost(e);
         }
     }
@@ -467,6 +511,11 @@ public class TagReaderPlugin extends Plugin {
 
     private NfcAdapter adapter() {
         return NfcAdapter.getDefaultAdapter(getContext());
+    }
+
+    private boolean nfcOff() {
+        NfcAdapter adapter = adapter();
+        return adapter != null && !adapter.isEnabled();
     }
 
     private static void reject(PluginCall call, Exception e) {

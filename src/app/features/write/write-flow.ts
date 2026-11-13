@@ -14,7 +14,7 @@ export type SpoolTarget = { kind: 'none' } | { kind: 'new'; location: string } |
 
 export type FlowState =
   | { step: 'idle' }
-  | { step: 'scanning'; slow: boolean }
+  | { step: 'scanning'; slow: boolean; stopping?: boolean }
   | { step: 'error'; error: NfcError; help: ProblemHelp }
   | { step: 'syncing'; tag: TagInfo }
   | { step: 'conflict'; tag: TagInfo; owner: SpoolmanSpool }
@@ -57,7 +57,8 @@ export class WriteFlow {
     this.allowIncompatible = false;
     this.writtenCount.set(0);
     this.writtenUids.clear();
-    void this.scan(false);
+    // A tag already on the phone is the one to write, as on iOS.
+    void this.scan(true);
   }
 
   /** After a transient failure the tag may still be on the phone, so it's used again; after a tag problem, a new tag is awaited. */
@@ -78,12 +79,15 @@ export class WriteFlow {
   }
 
   cancel(): void {
-    const scanning = this.state().step === 'scanning';
+    const state = this.state();
     this.abort?.abort();
     this.abort = null;
     // A scan still waiting for a tag ends at once and goes idle. One already writing a tag can't be
-    // stopped, so it finishes and shows what really happened to the tag.
-    if (scanning) return;
+    // stopped, so it finishes and shows what really happened to the tag; meanwhile the dialog says so.
+    if (state.step === 'scanning') {
+      this.state.set({ ...state, stopping: true });
+      return;
+    }
     this.run++;
     this.state.set({ step: 'idle' });
   }
@@ -109,7 +113,8 @@ export class WriteFlow {
     const run = ++this.run;
     this.state.set({ step: 'scanning', slow: false });
     const slowTimer = setTimeout(() => {
-      if (run === this.run && this.state().step === 'scanning') this.state.set({ step: 'scanning', slow: true });
+      const state = this.state();
+      if (run === this.run && state.step === 'scanning' && !state.stopping) this.state.set({ step: 'scanning', slow: true });
     }, SLOW_HINT_MS);
 
     const data = encodePayload(buildOpenSpoolPayload(spec));
@@ -160,7 +165,7 @@ export class WriteFlow {
     }
 
     this.state.set({ step: 'syncing', tag });
-    let created: SpoolmanSpool | null = null;
+    let created: SyncResult | null = null;
     try {
       let linkTo = target.kind === 'existing' ? target.spool : null;
       if (!takeTagFrom) {
@@ -180,9 +185,9 @@ export class WriteFlow {
               location: target.location,
               takeTagFrom,
               // From here on, a retry or another tag links to this spool instead of creating a second one.
-              onCreated: (spool) => {
-                created = spool;
-                if (!stale()) this.target = { kind: 'existing', spool };
+              onCreated: (result) => {
+                created = result;
+                if (!stale()) this.target = { kind: 'existing', spool: result.spool };
               },
             })
           : await this.spoolman.linkTagToSpool(linkTo!, tag.uid, takeTagFrom);
@@ -194,12 +199,11 @@ export class WriteFlow {
     } catch (error) {
       if (stale()) return;
       const message = error instanceof Error ? error.message : String(error);
-      const spool = created as SpoolmanSpool | null; // assigned in a callback, which TS doesn't track
-      if (spool) {
+      const partial = created as SyncResult | null; // assigned in a callback, which TS doesn't track
+      if (partial) {
         // The spool exists and carries the tag in Card UIDs, which is what the U1 looks up.
         this.spoolman.locations.reload();
-        const sync: SyncResult = { spool, createdSpool: true, createdFilament: false, createdVendor: false, movedFrom: takeTagFrom };
-        this.finish(tag, sync, `Added to Spoolman, but adding the tag to Spoolman’s own tag list failed: ${message}`);
+        this.finish(tag, partial, `Added to Spoolman, but adding the tag to Spoolman’s own tag list failed: ${message}`);
         return;
       }
       this.state.set({ step: 'done', tag, sync: null, syncNote: message, syncFailed: true });

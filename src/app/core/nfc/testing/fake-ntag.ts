@@ -28,6 +28,8 @@ export interface FakeNtagOptions {
   flakyPages?: number[];
   /** Like iOS: once the tag refuses a command, it answers nothing else. */
   haltsOnRefusal?: boolean;
+  /** NFC is switched off: every command fails that way. */
+  nfcOff?: boolean;
   /** What the platform NDEF writer does. */
   ndefWrite?: (tag: FakeNtag, request: WriteRequest) => void;
 }
@@ -38,6 +40,7 @@ export class FakeNtag implements TagLink {
   readonly frames: number[][] = [];
   readonly ndefWrites: WriteRequest[] = [];
   readonly recoversFromRefusal: boolean;
+  failures = 0;
   private halted = false;
 
   constructor(private readonly options: FakeNtagOptions = {}) {
@@ -69,6 +72,16 @@ export class FakeNtag implements TagLink {
 
   async command(frame: number[]): Promise<number[]> {
     this.frames.push(frame);
+    try {
+      return this.answer(frame);
+    } catch (error) {
+      this.failures++;
+      throw error;
+    }
+  }
+
+  private answer(frame: number[]): number[] {
+    if (this.options.nfcOff) throw new LinkError('disabled', 'NFC is turned off.');
     if (this.frames.length > (this.options.leavesAfter ?? Infinity)) throw new LinkError('lost', 'Tag connection lost.');
     if (this.halted) return this.refuse();
     const [command, page] = frame;

@@ -4,9 +4,14 @@
   @let s = state();
   @switch (s.step) {
     @case ('scanning') {
-      <h2 id="write-dialog-title">Hold the tag to your phone</h2>
-      <app-phone-antenna />
-      @if (s.slow) {
+      @if (s.stopping) {
+        <h2 id="write-dialog-title">Finishing with the tag…</h2>
+        <p>The tag is being written. Keep holding it until this finishes; it takes about a second.</p>
+      } @else {
+        <h2 id="write-dialog-title">Hold the tag to your phone</h2>
+        <app-phone-antenna />
+      }
+      @if (s.slow && !s.stopping) {
         <div class="callout">
           <h3>Not finding it?</h3>
           <ul>
@@ -16,9 +21,11 @@
           </ul>
         </div>
       }
-      <div class="actions">
-        <button type="button" class="button" (click)="flow.cancel()">Cancel</button>
-      </div>
+      @if (!s.stopping) {
+        <div class="actions">
+          <button type="button" class="button" (click)="flow.cancel()">Cancel</button>
+        </div>
+      }
     }
 
     @case ('error') {

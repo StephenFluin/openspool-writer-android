@@ -15,10 +15,10 @@ import {
   type2PageWrites,
 } from './type2';
 
-/** Why a raw command failed: the tag left, it refused the command (NAK), or something else. */
+/** Why a raw command failed: the tag left, it refused the command (NAK), NFC was turned off, or something else. */
 export class LinkError extends Error {
   constructor(
-    readonly reason: 'lost' | 'refused' | 'failed',
+    readonly reason: 'lost' | 'refused' | 'disabled' | 'failed',
     message: string,
     options?: ErrorOptions,
   ) {
@@ -38,10 +38,14 @@ export interface TagLink {
    * command; on iOS it stays halted for the rest of the session.
    */
   readonly recoversFromRefusal: boolean;
+  /** Commands that failed so far (iOS), after which the tag may no longer answer. */
+  readonly failures?: number;
 }
 
 const LOST = 'The tag moved away before the phone finished with it.';
 const WRITE_FAILED = 'The phone found the tag but couldn’t write to it.';
+const STOPPED_ANSWERING =
+  'The tag stopped answering while the phone checked it. It may have moved, or a password may protect it. Hold it still and try again.';
 
 /** Reads a tag, including what the chip itself reports. */
 export async function readTag(link: TagLink, tag: TagInfo): Promise<TagInfo> {
@@ -53,6 +57,8 @@ export async function writeTag(link: TagLink, tag: TagInfo, request: WriteReques
   const checked = withChip(tag, await inspectChip(link, tag, link.recoversFromRefusal ? 'full' : 'light'));
   const problem = checkTagForWrite(checked, request);
   if (problem) throw problem;
+  // On iOS a refused command halts the tag for the rest of the session, so writing would only fail.
+  if (!link.recoversFromRefusal && (link.failures ?? 0) > 0) throw new NfcError('tag-lost', STOPPED_ANSWERING, checked);
   const chip = checked.chip;
 
   // Neither platform's NDEF formatter handles a blank NTAG reliably, so it's set up page by page.
@@ -86,6 +92,7 @@ export async function inspectChip(link: TagLink, tag: TagInfo, depth: 'full' | '
   try {
     header = await read(link, 0);
   } catch (error) {
+    stopIfDisabled(error, tag);
     if (isLost(error)) throw new NfcError('tag-lost', LOST, tag, { cause: error });
     // On iOS the tag now answers nothing more. On Android it's re-selected, and an NTAG that refuses
     // page 0 has a read password over all its memory, which GET_VERSION (never protected) reveals.
@@ -97,9 +104,11 @@ export async function inspectChip(link: TagLink, tag: TagInfo, depth: 'full' | '
   try {
     version = await exactly(link, [CMD_GET_VERSION], 8);
   } catch (error) {
+    stopIfDisabled(error, tag);
     if (!header) return null;
-    // Android reports a command the chip ignores as a lost tag; a tag that still answers didn't leave.
-    if (isLost(error) && !(link.recoversFromRefusal && (await answers(link, true)))) {
+    // Android reports a command the chip ignores as a lost tag, and a tag at the edge of the field as a
+    // refusal; asking again tells both from a chip that just doesn't know GET_VERSION.
+    if (link.recoversFromRefusal ? !(await answers(link, true, tag)) : isLost(error)) {
       throw new NfcError('tag-lost', LOST, tag, { cause: error });
     }
     // Older chips and some clones don't answer GET_VERSION.
@@ -113,10 +122,11 @@ export async function inspectChip(link: TagLink, tag: TagInfo, depth: 'full' | '
     try {
       config = await read(link, model.dynamicLockPage);
     } catch (error) {
+      stopIfDisabled(error, tag);
       if (link.recoversFromRefusal) {
         // A genuine NTAG only refuses its configuration under a read password, but Android can report
         // a tag that left the same way, so check it's still there.
-        if (!(await answers(link, header !== null))) throw new NfcError('tag-lost', LOST, tag, { cause: error });
+        if (!(await answers(link, header !== null, tag))) throw new NfcError('tag-lost', LOST, tag, { cause: error });
         configUnreadable = true;
       } else if (isLost(error)) {
         throw new NfcError('tag-lost', LOST, tag, { cause: error });
@@ -145,13 +155,14 @@ async function writePages(link: TagLink, tag: TagInfo, request: WriteRequest, fo
     }
     await verify(link, plan.expected, () => answered++);
   } catch (error) {
+    stopIfDisabled(error, tag);
     if (error instanceof ReadBackError || error instanceof RefusedWriteError) {
       throw new NfcError('write-failed', WRITE_FAILED, tag, { cause: error });
     }
     if (isLost(error)) throw new NfcError('tag-lost', LOST, tag, { cause: error });
     if (link.recoversFromRefusal) {
       // Android can ask again: a tag that still answers refused the write rather than leaving.
-      const present = await answers(link, true);
+      const present = await answers(link, true, tag);
       throw new NfcError(present ? 'write-failed' : 'tag-lost', present ? WRITE_FAILED : LOST, tag, { cause: error });
     }
     // iOS can't ask again. The inspection just showed the tag answers and nothing protects it, so a
@@ -170,13 +181,21 @@ class RefusedWriteError extends Error {
  * Whether the tag still answers, for telling a refusal from a tag that left (Android only, where a
  * refusal doesn't halt the tag). Uses page 0 when it's readable, otherwise GET_VERSION.
  */
-async function answers(link: TagLink, pageZeroReadable: boolean): Promise<boolean> {
+async function answers(link: TagLink, pageZeroReadable: boolean, tag: TagInfo): Promise<boolean> {
   try {
     if (pageZeroReadable) await read(link, 0);
     else await exactly(link, [CMD_GET_VERSION], 8);
     return true;
-  } catch {
+  } catch (error) {
+    stopIfDisabled(error, tag);
     return false;
+  }
+}
+
+/** NFC turned off mid-way ends everything, with the error that offers NFC settings. */
+function stopIfDisabled(error: unknown, tag: TagInfo): void {
+  if (error instanceof LinkError && error.reason === 'disabled') {
+    throw new NfcError('disabled', 'NFC is turned off.', tag, { cause: error });
   }
 }
 

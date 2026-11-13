@@ -1,5 +1,5 @@
 import { CapacitorNfc, CapacitorNfcPlugin, NfcEvent, NfcSessionEndEvent } from '@capgo/capacitor-nfc';
-import { COMMAND_TIMEOUT_MS, errorMessage, nativeAvailability, requireNfc } from './native-common';
+import { COMMAND_TIMEOUT_MS, errorMessage, nativeAvailability, requireNfc, STOP_DEADLINE_MS, withDeadline } from './native-common';
 import { NfcAvailability, NfcBackend, NfcError, TagInfo, WriteRequest } from './nfc-types';
 import { pendingScan, ScanQueue } from './scan';
 import { LinkError, readTag, TagLink, writeTag } from './tag-ops';
@@ -46,23 +46,31 @@ export class IosNfcBackend implements NfcBackend {
     this.listening ??= Promise.all([
       this.nfc.addListener('nfcEvent', (event) => this.handlers?.tag(event)),
       this.nfc.addListener('nfcSessionEnd', (event) => this.handlers?.end(event)),
-    ]);
+    ]).catch((error) => {
+      this.listening = null; // try again next scan
+      throw error;
+    });
     await this.listening;
 
     const scan = pendingScan<T>(signal);
     let started = false;
     let earlyEnd: NfcSessionEndEvent['reason'] | null = null;
     let ended: NfcSessionEndEvent['reason'] | null = null;
+    let live = true;
     this.handlers = {
       tag: (event) =>
         scan.take(async () => {
-          const link = iosLink(this.nfc, () => ended !== null);
+          const link = iosLink(this.nfc, () => ended !== null, () => live);
+          // A failed command's rejection can arrive just before the session end that caused it.
+          const settleEnd = () => (link.failures > 0 && !ended ? new Promise((resolve) => setTimeout(resolve, END_GRACE_MS)) : null);
           try {
             const result = await work(tagInfoFrom(event.tag), link);
+            await settleEnd();
             // A result pieced together from commands that failed because the session ended isn't trustworthy.
             if (ended && link.failures > 0) throw endedDuringWork(ended);
             return result;
           } catch (error) {
+            await settleEnd();
             throw ended ? endedDuringWork(ended, error) : error;
           }
         }),
@@ -88,13 +96,14 @@ export class IosNfcBackend implements NfcBackend {
     try {
       return await scan.result;
     } finally {
+      live = false;
       this.handlers = null;
-      await this.nfc.stopScanning().catch(() => undefined);
+      await withDeadline(this.nfc.stopScanning().catch(() => undefined), STOP_DEADLINE_MS);
     }
   }
 }
 
-function iosLink(nfc: IosNfc, sessionEnded: () => boolean): TagLink & { readonly failures: number } {
+function iosLink(nfc: IosNfc, sessionEnded: () => boolean, live: () => boolean): TagLink & { readonly failures: number } {
   let answered = false;
   let failures = 0;
   return {
@@ -103,6 +112,7 @@ function iosLink(nfc: IosNfc, sessionEnded: () => boolean): TagLink & { readonly
       return failures;
     },
     async command(data) {
+      if (!live()) throw new LinkError('lost', 'The scan is over.');
       try {
         const { response } = await nfc.transceive({ data, tech: 'nfcA', timeout: COMMAND_TIMEOUT_MS });
         answered = true;
@@ -121,6 +131,7 @@ function iosLink(nfc: IosNfc, sessionEnded: () => boolean): TagLink & { readonly
       }
     },
     async writeNdef(request) {
+      if (!live()) throw new NfcError('tag-lost', 'The scan ended before the tag was written.');
       try {
         await nfc.write({
           // iOS can't format tags; blank NTAGs are set up page by page instead.
@@ -147,6 +158,9 @@ function iosLink(nfc: IosNfc, sessionEnded: () => boolean): TagLink & { readonly
   };
 }
 
+/** How long to wait for a session end that may explain a failed command. */
+const END_GRACE_MS = 150;
+
 /** The session ended while a tag was being handled. */
 function endedDuringWork(reason: NfcSessionEndEvent['reason'], cause?: unknown): NfcError {
   if (reason === 'userCancelled') return new NfcError('cancelled', 'Scan cancelled.', undefined, { cause });
@@ -158,6 +172,10 @@ function endedDuringWork(reason: NfcSessionEndEvent['reason'], cause?: unknown):
   );
 }
 
+/**
+ * Known limitation: the plugin reports sessions it ends itself (two tags in range, a tag it couldn't
+ * connect to) as 'userCancelled', so those close quietly like a cancel.
+ */
 function sessionEndError(reason: NfcSessionEndEvent['reason']): NfcError {
   if (reason === 'userCancelled') return new NfcError('cancelled', 'Scan cancelled.');
   if (reason === 'sessionTimeout') return new NfcError('timeout', 'No tag was found before the scan timed out.');

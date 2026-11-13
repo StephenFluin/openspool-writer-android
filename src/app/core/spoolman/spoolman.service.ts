@@ -93,15 +93,16 @@ export class SpoolmanService {
       location: options.location.trim() || undefined,
       extra: fields.cardUids ? { card_uids: encodeCardUids([uid]) } : {},
     });
-    options.onCreated?.(spool);
-    spool = await this.linkNativeTag(spool, uid);
-    return {
+    const result: SyncResult = {
       spool,
       createdSpool: true,
       createdFilament: filament.created,
       createdVendor: vendor.created,
       movedFrom: options.takeTagFrom,
     };
+    options.onCreated?.(result);
+    spool = await this.linkNativeTag(spool, uid);
+    return { ...result, spool };
   }
 
   async linkTagToSpool(spool: SpoolmanSpool, uid: string, takeTagFrom?: SpoolmanSpool): Promise<SyncResult> {

@@ -53,7 +53,8 @@ export class MockNfcBackend implements NfcBackend {
     if (this.scenario === 'lost') {
       throw new NfcError('tag-lost', 'The tag moved away before the write finished.', tag);
     }
-    await delay(400, signal);
+    // Like the real backends, a write that has started finishes even if the scan is cancelled.
+    await delay(400, new AbortController().signal);
     this.written = request.data;
     return tag;
   }

@@ -6,6 +6,14 @@ export type SystemNfc = Pick<CapacitorNfcPlugin, 'isSupported' | 'getStatus' | '
 
 /** Per-command timeout for raw NTAG commands; each one takes a few milliseconds on a healthy tag. */
 export const COMMAND_TIMEOUT_MS = 500;
+/** How long a scan waits for the reader to stop before letting the next scan start anyway. */
+export const STOP_DEADLINE_MS = 2000;
+
+/** Waits for the promise, but no longer than `ms`. */
+export function withDeadline(promise: Promise<unknown>, ms: number): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([promise, new Promise((resolve) => (timer = setTimeout(resolve, ms)))]).finally(() => clearTimeout(timer));
+}
 
 export async function nativeAvailability(nfc: SystemNfc): Promise<NfcAvailability> {
   const { supported } = await nfc.isSupported();
