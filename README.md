@@ -47,7 +47,7 @@ Check and the write error dialog show these findings. Blank NTAGs, and NTAGs whe
   - It sends commands to whichever tag came last.
   - After a raw command, it stops reporting tags until the app restarts.
 
-  `TagReader` addresses each tag by ID and settles every call. It also keeps reader mode on for a short grace period between scans, so a lifted tag isn't handed to the system. "Try again" reuses a tag that is still on the phone.
+  `TagReader` addresses each tag by ID and settles every call. It also keeps reader mode on for a short grace period between scans, so a lifted tag isn't handed to the system. Android only reports a tag again after it leaves and comes back, so each scan is offered the newest tag still on the phone, as a new iOS session would be. Its contents are re-read if the app wrote to it. "Write another tag" and "Try another tag" skip the tag that was just handled.
 - **iOS** uses `@capgo/capacitor-nfc`'s tag reader session. Its listeners are registered once, because the plugin replays events to new listeners. Before a write, only page 0 is read, because on iOS a refused command halts the tag for the rest of the session.
 - Both platforms share the read and write logic in `src/app/core/nfc/tag-ops.ts`. Its tests run against a simulated NTAG215 (`src/app/core/nfc/testing/fake-ntag.ts`).
 
